@@ -11,6 +11,9 @@ INSTALL_PREFIX="${AM_PREFIX-}"
 HERE="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 ROOT="$(dirname "$HERE")"
 . "$ROOT/bin/amd-env.sh"
+# Wine's own headers (wine/debug.h) sit next to the tools: /usr/include for a distribution
+# package, /opt/wine-*/include for a WineHQ build
+WINE_INC="$(dirname "$(readlink -f "$(command -v winegcc)")")/../include"
 cd "$HERE"
 if [ "${AM_SHIMS_BUILT-}" != 1 ] || [ ! -f amshim.dll ]; then
     # overrides built by token pasting are invisible to the generator (it finds OV_* by regex)
@@ -22,7 +25,7 @@ if [ "${AM_SHIMS_BUILT-}" != 1 ] || [ ! -f amshim.dll ]; then
     AM_METADATA_DIR="$AM_METADATA_DIR" "$AM_PYTHON" -I "$ROOT/tools/gen.py" .
     winegcc -b x86_64-windows -shared -O1 -g -Wall -Wno-unused-function -Wno-unused-variable \
         -Wno-incompatible-pointer-types -Wno-unused-but-set-variable \
-        -D__WINESRC__ -idirafter /usr/include -I. \
+        -D__WINESRC__ -idirafter "$WINE_INC" -idirafter /usr/include -I. \
         amshim_*.c ov_*.c gen/amshim_gen.c amshim.spec -lcombase -lole32 -lshell32 -luser32 -lwinhttp -lbcrypt -lcrypt32 -lurlmon -lshlwapi -loleaut32 -o amshim.dll
 fi
 [ -n "$INSTALL_PREFIX" ] || exit 0

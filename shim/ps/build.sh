@@ -8,6 +8,9 @@
 # built, only install it.
 set -e
 cd "$(dirname "$(readlink -f "$0")")"
+# Wine's own headers (wine/debug.h) sit next to the tools: /usr/include for a distribution
+# package, /opt/wine-*/include for a WineHQ build
+WINE_INC="$(dirname "$(readlink -f "$(command -v winegcc)")")/../include"
 
 wine_idl_dir() {
     if [ -n "$WINE_INCLUDE_DIR" ]; then
@@ -46,7 +49,7 @@ if [ "${AM_SHIMS_BUILT-}" != 1 ] || [ ! -f amps.dll ]; then
     # PROXY_CLSID_IS: the proxy/stub class ID regsvr32 registers for the interfaces in amps.idl
     # ({38d27ce3-b664-433d-a89d-a5a25a7dc55b}, a random GUID that belongs to this project)
     winegcc -b x86_64-windows -shared -O1 -g -D__WINESRC__ -DREGISTER_PROXY_DLL -DPROXY_CLSID_IS='{0x38d27ce3,0xb664,0x433d,{0xa8,0x9d,0xa5,0xa2,0x5a,0x7d,0xc5,0x5b}}' \
-        -idirafter /usr/include -I. amps_p.c amps_i.c dlldata.c amps.spec \
+        -idirafter "$WINE_INC" -idirafter /usr/include -I. amps_p.c amps_i.c dlldata.c amps.spec \
         -lrpcrt4 -lcombase -lole32 -luuid -o amps.dll
 fi
 [ -n "$AM_PREFIX" ] || exit 0
