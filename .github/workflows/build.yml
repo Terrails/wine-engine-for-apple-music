@@ -17,7 +17,7 @@ jobs:
       AM_CACHE_DIR: ${{ github.workspace }}/.cache/wine-engine
       WINE_BRANCH: devel
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262   # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
 
       - name: Wine (official WineHQ repository) and build tools
         run: |
@@ -49,7 +49,7 @@ jobs:
           echo "AM_PYTHON=$PWD/.venv/bin/python" >> "$GITHUB_ENV"
 
       - name: Cache NuGet metadata
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830   # v4.3.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9   # v6.1.0
         with:
           path: ${{ env.AM_CACHE_DIR }}/metadata
           key: metadata-${{ hashFiles('tools/fetch-metadata.sh') }}
