@@ -1,0 +1,14 @@
+#!/bin/sh
+# SPDX-License-Identifier: LGPL-2.1-or-later
+# WinRT metadata query: tools/q Windows.Foundation.Uri | tools/q --search <text>
+# Reads the Windows SDK metadata from tools/fetch-metadata.sh ($AM_METADATA_DIR/sdk, fetched when
+# missing). For the app's own types point WINMD_DIR at the installed app or the unpacked MSIX:
+#   WINMD_DIR="$AM_CACHE_DIR/msix/<version>" tools/q AMP.Services.IPlayer   (prints vtable slots)
+ROOT="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+. "$ROOT/bin/amd-env.sh"
+am_python
+if [ -z "$WINMD_DIR" ]; then
+    WINMD_DIR="$AM_METADATA_DIR/sdk"
+    ls "$WINMD_DIR"/*.winmd >/dev/null 2>&1 || "$ROOT/tools/fetch-metadata.sh" >&2 || exit 1
+fi
+exec "$AM_PYTHON" -I "$ROOT/tools/winmd.py" "$WINMD_DIR" "$@"

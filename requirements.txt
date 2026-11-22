@@ -1,0 +1,8 @@
+# Python packages for the code generator (tools/gen.py), the metadata query (tools/q, tools/winmd.py),
+# tools/geniids.py and tools/addimport.py (setup-prefix.sh). Developer extras: dev/requirements.txt.
+# Install into a venv:
+#   python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+#   export AM_PYTHON="$PWD/.venv/bin/python"
+dnfile==0.18.0
+# pulled in by dnfile; tools/addimport.py and dev/disfn.py import it directly
+pefile==2024.8.26
