@@ -1,0 +1,8 @@
+-target
+x86_64-windows
+-D__WINESRC__
+-I.
+-I/usr/include/wine/windows
+-I/usr/include/wine/msvcrt
+-idirafter
+/usr/include

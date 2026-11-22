@@ -1,0 +1,44 @@
+/* SPDX-License-Identifier: LGPL-2.1-or-later */
+/* Proxy/stubs for IInspectable, IAsyncInfo and IAsyncOperation<HSTRING>: Wine registers none, and the delegating
+ * stubs in AMPLibraryAgent.Proxies.dll need the IInspectable one. */
+import "unknwn.idl";
+import "hstring.idl";
+
+typedef [v1_enum] enum TrustLevel { BaseTrust, PartialTrust, FullTrust } TrustLevel;
+typedef [v1_enum] enum AsyncStatus { Started, Completed, Canceled, Error } AsyncStatus;
+
+[object, uuid(af86e2e0-b12d-4c6a-9c5a-d7aa65101e90), pointer_default(unique)]
+interface IInspectable : IUnknown
+{
+    HRESULT GetIids([out] ULONG *count, [out, size_is(, *count)] IID **iids);
+    HRESULT GetRuntimeClassName([out] HSTRING *name);
+    HRESULT GetTrustLevel([out] TrustLevel *level);
+}
+
+[object, uuid(00000036-0000-0000-c000-000000000046), pointer_default(unique)]
+interface IAsyncInfo : IInspectable
+{
+    [propget] HRESULT Id([out, retval] unsigned __int32 *id);
+    [propget] HRESULT Status([out, retval] AsyncStatus *status);
+    [propget] HRESULT ErrorCode([out, retval] HRESULT *error_code);
+    HRESULT Cancel();
+    HRESULT Close();
+}
+
+/* IAsyncOperation<HSTRING> and its completed handler: every async IAMPLibrary method returns
+ * this. Windows ships system proxy/stubs for it; Apple's proxy DLL does not contain them. */
+interface IAsyncOperation_HSTRING;
+
+[object, uuid(b79a741f-7fb5-50ae-9e99-911201ec3d41), pointer_default(unique)]
+interface IAsyncOperationCompletedHandler_HSTRING : IUnknown
+{
+    HRESULT Invoke([in] IAsyncOperation_HSTRING *info, [in] AsyncStatus status);
+}
+
+[object, uuid(3e1fe603-f897-5263-b328-0806426b8a79), pointer_default(unique)]
+interface IAsyncOperation_HSTRING : IInspectable
+{
+    [propput] HRESULT Completed([in] IAsyncOperationCompletedHandler_HSTRING *handler);
+    [propget] HRESULT Completed([out, retval] IAsyncOperationCompletedHandler_HSTRING **handler);
+    HRESULT GetResults([out, retval] HSTRING *results);
+}
