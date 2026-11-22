@@ -1,0 +1,26 @@
+#!/bin/sh
+# SPDX-License-Identifier: LGPL-2.1-or-later
+# Interactive sign-in: starts the engine, accepts the first-run notice, starts sign-in and shows
+# native prompts (credentials, then the two-factor code) on your desktop. Only needed once, or
+# after a sign-out. The service must not be running (bin/amctl quit).
+# usage: bin/amd-signin [seconds=900]     log: $AM_LOG_DIR/signin.log (stays on this machine)
+# Exit status: 0 when signed in, otherwise amd.exe's (124: timed out).
+# Runs with minimal Wine tracing and without expanding the app's private log arguments, so what
+# you type is not written by the wrapper or the shims.
+ROOT="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+. "$ROOT/bin/amd-env.sh"
+set -e
+if am_busy; then echo "the service or the agent is running; stop it first: bin/amctl quit" >&2; exit 1; fi
+am_need_app
+am_logs
+am_build
+am_clean_session
+am_install amd.exe
+cd "$APPDIR"
+unset AM_OSLOG_ARGS AM_DIALOG_AUTO AM_TEST_USER AM_TEST_PASS
+set +e
+AM_ACCEPT_WELCOME=1 WINEDEBUG=err timeout "${1:-900}" wine amd.exe signin > "$LOGS/signin.log" 2>&1
+rc=$?
+echo "exit=$rc (0 = signed in)"
+wineserver -k 2>/dev/null
+exit $rc

@@ -1,0 +1,5 @@
+# Extra Python packages for the developer tools in dev/ (on top of ../requirements.txt):
+#   dev/gapmon.py   numpy (also needs parec from PulseAudio/PipeWire)
+#   dev/disfn.py    pefile (in ../requirements.txt); reads a listing from llvm-objdump
+-r ../requirements.txt
+numpy

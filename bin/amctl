@@ -1,0 +1,30 @@
+#!/bin/sh
+# SPDX-License-Identifier: LGPL-2.1-or-later
+# Talk to the running wrapper service (AM_PREFIX selects the prefix whose token is used, AM_PORT the port).
+# usage: amctl status | pause | resume | stop | next | previous | quit
+#        amctl play <songId> <albumId> [storefront]   (the album, starting at the song)
+#        amctl play-single <songId> <albumId> [storefront]   |   amctl play-album <albumId> [storefront]
+#        amctl seek <ms>   |   amctl volume <0..1>   |   amctl quality aac|lossless|hires
+ROOT="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+. "$ROOT/bin/amd-env.sh"
+PORT=${AM_PORT:-7654}
+[ -n "$1" ] || { sed -n '4,7s/^# //p' "$(readlink -f "$0")"; exit 2; }
+TOKEN=$(am_token)
+[ -n "$TOKEN" ] || { echo "no token file: is the service running?" >&2; exit 1; }
+# exit status: curl's (non-zero when the service cannot be reached or answers with an HTTP error;
+# the response body, if there is one, is printed either way)
+call() {
+    curl -sS --fail-with-body -m 70 -X "$1" -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:$PORT$2"
+    rc=$?; echo; return $rc
+}
+case "$1" in
+    status) call GET /status ;;
+    pause|resume|stop|next|previous|quit) call POST "/$1" ;;
+    play) call POST "/play?song=$2&album=$3${4:+&storefront=$4}" ;;
+    play-single) call POST "/play?song=$2&album=$3${4:+&storefront=$4}&queue=single" ;;
+    play-album) call POST "/play?album=$2${3:+&storefront=$3}" ;;
+    seek) call POST "/seek?ms=$2" ;;
+    quality) call POST "/quality?q=$2" ;;
+    volume) call POST "/volume?v=$2" ;;
+    *) sed -n '4,7s/^# //p' "$(readlink -f "$0")"; exit 2 ;;
+esac

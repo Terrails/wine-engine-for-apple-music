@@ -1,0 +1,48 @@
+#!/bin/sh
+# SPDX-License-Identifier: LGPL-2.1-or-later
+# Run the wrapper service (amd.exe serve) with the local control API (see wrapper/src/server.h).
+# usage: bin/amd [port=${AM_PORT:-7654}]     log: $AM_LOG_DIR/amd.log (previous run: $AM_LOG_DIR/amd.prev.log)
+# Stops on POST /quit (bin/amctl quit; Sidra sends it when it quits) or when Wine is shut down.
+# After /quit the prefix's Wine session is ended too (once the agent has exited), unless
+# AM_KEEP_WINESERVER is set: Wine's services would otherwise stay.
+# Environment: AM_PREFIX, AM_LOG_DIR (see bin/amd-env.sh),
+#              AM_STOREFRONT (default "us": country code for album links, e.g. gb),
+#              AMD_WINEDEBUG (default err), AM_AUDIO_NAME (name shown in the mixer),
+#              AM_AUDIO_TRACK_NAME=0 (do not name the audio stream after the track),
+#              AM_KEEP_WINESERVER (set to any value, even 0: do not restart the Wine session),
+#              PULSE_LATENCY_MSEC (audio buffer on the PulseAudio side, default 100).
+ROOT="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+. "$ROOT/bin/amd-env.sh"
+set -e
+am_need_app
+am_build
+am_clean_session
+am_install amd.exe
+am_rotate_log amd
+cd "$APPDIR"
+unset AM_OSLOG_ARGS AM_DIALOG_AUTO AM_TEST_USER AM_TEST_PASS
+# Wine names its audio client after the exe's ProductName ("AMPLibraryAgent"). libpulse lets the
+# environment override that, so mixers (pavucontrol, PipeWire) show "Apple Music" instead.
+# The stream itself (media.name, Wine: "audio stream #n") gets "<artist> - <title>": amd.exe writes
+# it to a file, build/libampulse.so (pulse/ampulse.c, preloaded) renames the stream from it.
+# Plasma then shows "Apple Music · <artist> - <title>".
+if [ "${AM_AUDIO_TRACK_NAME:-1}" != 0 ]; then
+    export LD_PRELOAD="$WRAPPER/build/libampulse.so${LD_PRELOAD:+:$LD_PRELOAD}"
+    export AM_MEDIA_NAME_FILE="$WINEPREFIX/drive_c/users/${USER:-$(id -un)}/AppData/Local/AppleMusicWrapper/media-name"
+fi
+# Each track's audio client asks for 10 ms (Wine: 30 ms buffer, pulse target 25 ms), so a Wine
+# push thread a few ms late leaves the stream empty: a click. 100 ms on the pulse side removed the
+# gaps under CPU load (docs/architecture.md); it also stops the stream forcing the whole PipeWire
+# graph down to 256-frame cycles. Costs ~70 ms of output delay; nothing here needs lip sync.
+export PULSE_LATENCY_MSEC="${PULSE_LATENCY_MSEC:-100}"
+set +e
+env AM_ACCEPT_WELCOME=1 WINEDEBUG="${AMD_WINEDEBUG:-err}" \
+    "PULSE_PROP_OVERRIDE_application.name=${AM_AUDIO_NAME:-Apple Music}" \
+    "PULSE_PROP_OVERRIDE_application.icon_name=multimedia-audio-player" \
+    wine amd.exe serve "${1:-${AM_PORT:-7654}}" > "$LOGS/amd.log" 2>&1
+rc=$?
+if [ $rc = 0 ] && [ -z "$AM_KEEP_WINESERVER" ]; then
+    for _ in $(seq 40); do pgrep -f 'AMPLibraryAgent\.exe' >/dev/null || break; sleep 0.5; done
+    wineserver -k 2>/dev/null
+fi
+exit $rc
