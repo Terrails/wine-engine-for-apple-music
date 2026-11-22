@@ -1,0 +1,85 @@
+# SPDX-License-Identifier: LGPL-2.1-or-later
+# Build-only check: compiles everything that does not need the app or a Wine prefix.
+# Nothing here runs Wine, the app or any setup/install step.
+name: build
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      AM_CACHE_DIR: ${{ github.workspace }}/.cache/wine-engine
+      WINE_BRANCH: devel
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262   # v4.4.0
+
+      - name: Wine (official WineHQ repository) and build tools
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo mkdir -pm755 /etc/apt/keyrings
+          sudo wget -qO /etc/apt/keyrings/winehq-archive.key https://dl.winehq.org/wine-builds/winehq.key
+          codename="$(lsb_release -sc)"
+          sudo wget -qNP /etc/apt/sources.list.d/ \
+            "https://dl.winehq.org/wine-builds/ubuntu/dists/$codename/winehq-$codename.sources"
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            "winehq-$WINE_BRANCH" "wine-$WINE_BRANCH-dev" \
+            clang lld libpulse-dev make unzip curl python3-venv shellcheck
+          echo "/opt/wine-$WINE_BRANCH/bin" >> "$GITHUB_PATH"
+
+      - name: Versions
+        run: |
+          wine --version || true
+          command -v winegcc widl winebuild
+          clang --version | head -1
+
+      - name: Python with dnfile
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install -r requirements.txt
+          echo "AM_PYTHON=$PWD/.venv/bin/python" >> "$GITHUB_ENV"
+
+      - name: Cache NuGet metadata
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830   # v4.3.0
+        with:
+          path: ${{ env.AM_CACHE_DIR }}/metadata
+          key: metadata-${{ hashFiles('tools/fetch-metadata.sh') }}
+
+      - name: Shell syntax
+        run: |
+          scripts="setup-prefix.sh bin/amd bin/amctl bin/amd-signin bin/amd-env.sh tools/q \
+            tools/fetch-metadata.sh shim/build.sh shim/install.sh shim/build-stubs.sh \
+            shim/ampkg/build.sh shim/ps/build.sh dev/lab.sh dev/lab/iids.sh dev/run-agent.sh dev/dbg-agent.sh"
+          for f in $scripts; do sh -n "$f"; done
+          shellcheck -s sh -S warning $scripts
+
+      - name: Python syntax
+        run: python3 -m py_compile tools/*.py dev/*.py
+
+      - name: wrapper (amd.exe, libampulse.so, lab.exe without app metadata)
+        run: |
+          env -u AM_PREFIX -u WINEPREFIX make -C wrapper
+          env -u AM_PREFIX -u WINEPREFIX make -C wrapper lab
+
+      - name: amshim.dll (fetches the metadata from nuget.org)
+        run: env -u AM_PREFIX -u WINEPREFIX shim/build.sh
+
+      - name: ampkg.dll, amps.dll, stubs
+        run: |
+          env -u AM_PREFIX -u WINEPREFIX shim/ampkg/build.sh
+          env -u AM_PREFIX -u WINEPREFIX shim/ps/build.sh
+          env -u AM_PREFIX -u WINEPREFIX shim/build-stubs.sh
+
+      - name: addroot.exe
+        run: |
+          mkdir -p build
+          winegcc -b x86_64-windows -municode -O1 tools/addroot.c -lcrypt32 -o build/addroot.exe
+
+      - name: Mock service
+        run: node --check test/mock-daemon.mjs
