@@ -16,6 +16,7 @@
 #include "cxxdbg.h"
 #include "dialogs.h"
 #include "iat.h"
+#include "jsvalues.h"
 #include "medianame.h"
 #include "oslog.h"
 #include "server.h"
@@ -156,6 +157,7 @@ int app_start(DWORD settle_ms)
     LOG("AMP.Services %p err %lu", m, GetLastError());
     if (!m) return 1;
     oslog_hook_all();
+    jsvalues_install();
     LOG("AuthKit UI provider installed: %d", akui_install());
     LOG("clipboard check redirected: %d", iat_patch(m, "AMP.Utils.dll", "?ClipboardContainsContentDescriptors@Utils@AMP@winrt@@YA_NXZ", no_clipboard_content));
     {   /* AppleMusic.exe does this first thing in wWinMain */

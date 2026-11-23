@@ -21,6 +21,8 @@ First public release. Supports Apple Music for Windows 1.1792.39941.0 (x64).
   `hires`, kept by the engine across restarts.
 - A song plays in its album (next/previous follow the album); album playback; pause, resume,
   stop, next, previous, seek, volume.
+- JavaScript values the app leaves queued are freed (`wrapper/src/jsvalues.c`): memory grows by about
+  1.7 MB per album page instead of about 15 MB, and long sessions no longer end in 404s.
 - Local HTTP + JSON API on `127.0.0.1:7654` with a per-start bearer token: `GET /status` (state,
   now-playing metadata, decoded format, engine-hang flag) and `POST` endpoints for playback
   control and quality (`docs/api.md`). `bin/amctl` as a command-line client.

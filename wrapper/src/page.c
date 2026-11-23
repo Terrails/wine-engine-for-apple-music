@@ -142,6 +142,7 @@ HRESULT open_deeplink(const WCHAR *url)
     h = hs(url);   /* the callee keeps its own copy (WinRT convention) */
     hr = ((HRESULT (WINAPI *)(void *, HSTRING, boolean, void **))VT(g_main_vm)[31])(g_main_vm, h, FALSE, &act);
     WindowsDeleteString(h);
+    if (act) IUnknown_Release((IUnknown *)act);          /* started, not awaited */
     return hr;
 }
 

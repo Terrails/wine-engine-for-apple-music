@@ -64,15 +64,16 @@ compared.
 goes before an earlier one, enqueue the item after next first. An "add to the end of the queue"
 endpoint, needed to keep this up, does not exist yet.
 
-### Memory grows with every album page (`/play`, `/enqueue`)
+### Memory still grows a little with every album page (`/play`, `/enqueue`)
 
-Each `/play` or `/enqueue` opens an album page, after which `amd.exe` uses about 15 MB more, also for the
-same album again, and 2 minutes idle do not bring it back. In a test of about 120 enqueues in a row (654 MB to 2664 MB) the
-pages loaded ever more slowly and requests started to fail with a 404 (one at the 98th, all from the
-117th on). The wrapper's references to the pages are released; what
-keeps the memory is not known.
+The main cause is fixed: the app's `JavaScriptCoreV8.dll` queues released values and deletes one chunk
+of 1500 per garbage collection, far fewer than a page queues; the service makes it catch up
+(`wrapper/src/jsvalues.c`). What is left is about 1.7 MB per page after the first 20 or so (695 MB at 20
+enqueues, 923 MB at 160, no failures, `/enqueue` not slower; before, about 14.5 MB per page, with 404s
+from about the 98th). The rest is not traced. One contributor is Wine's heap: a group of 31 small
+blocks that was full is reused only once all 31 are free.
 
-**Workaround:** restart the service after long sessions.
+**Workaround:** restart the service after very long sessions.
 
 ### Short silence between tracks of different formats
 
