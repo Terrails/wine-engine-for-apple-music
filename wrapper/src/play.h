@@ -20,6 +20,11 @@ struct play_result
     int page_error;            /* the page reported an error */
     DWORD ms;                  /* time until playback was requested */
     const char *how;           /* which way it was started (log/diagnostics) */
+    UINT64 queue_item_id;      /* enqueue: the new queue item (0 if it did not show up) */
+    INT32 kind;                /* enqueue: its section kind */
 };
 
 void play_catalog(const struct play_request *req, struct play_result *res);
+/* "Play Next": add the catalogue song req->song (on album req->album) after the current item,
+ * without touching what plays */
+void play_enqueue(const struct play_request *req, struct play_result *res);

@@ -24,6 +24,15 @@ First public release. Supports Apple Music for Windows 1.1792.39941.0 (x64).
 - Local HTTP + JSON API on `127.0.0.1:7654` with a per-start bearer token: `GET /status` (state,
   now-playing metadata, decoded format, engine-hang flag) and `POST` endpoints for playback
   control and quality (`docs/api.md`). `bin/amctl` as a command-line client.
+- Seamless playback through the engine's own queue: `POST /enqueue` (Play Next of a catalogue
+  song without interrupting playback), `POST /dequeue`, `POST /autoplay`, and `upNext`,
+  `autoplay` and `nowPlaying.queueItemId` in the status. Album tracks in the same format play
+  gapless; tracks of different albums follow with under a second of silence.
+- `POST /crossfade` and `crossfade` in the status: the app's crossfade setting (seconds). It is
+  kept, but the engine does not crossfade under Wine (KNOWN_ISSUES.md).
+- `bin/amctl enqueue`, `dequeue`, `crossfade`, `autoplay`.
+- The mock service has the new endpoints and status fields, handles one request at a time like
+  the service, and can act as an older service (`MOCK_NO_SEAMLESS=1`, `POST /mock/seamless`).
 - The audio stream is named "Apple Music" with `<artist> - <title>` as its stream name in
   PulseAudio/PipeWire mixers (`libampulse.so`).
 - `PULSE_LATENCY_MSEC=100` by default against clicks under CPU load.

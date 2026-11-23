@@ -4,6 +4,8 @@
 #include "api.h"
 #include "play.h"
 #include "player.h"
+#include "queue.h"
+#include "vec.h"
 #include "signin.h"
 
 int api_quit_requested;
@@ -21,6 +23,7 @@ static void api_result(struct sreq *r, HRESULT hr)
 }
 
 static int all_digits(const char *s) { for (; *s; s++) if (*s < '0' || *s > '9') return 0; return 1; }
+static const char *const section_names[] = { "", "history", "current", "next-added", "next", "autoplay" };
 static int all_lower(const char *s) { for (; *s; s++) if (*s < 'a' || *s > 'z') return 0; return 1; }
 
 /* GET /status */
@@ -42,9 +45,29 @@ static void api_status(struct sreq *r)
         json_raw(&j, ",\"album\":"); json_str(&j, ws(st.album));
         json_raw(&j, ",\"format\":\"%s\",\"sampleRate\":", st.format); json_str(&j, ws(st.sample_rate));
         json_raw(&j, ",\"bitDepth\":"); json_str(&j, ws(st.bit_depth));
-        json_raw(&j, ",\"positionMs\":%I64d,\"durationMs\":%I64d}", st.position_ms, st.duration_ms);
+        json_raw(&j, ",\"positionMs\":%I64d,\"durationMs\":%I64d,\"queueItemId\":", st.position_ms, st.duration_ms);
+        if (st.queue_item_id) json_raw(&j, "\"%I64u\"}", st.queue_item_id); else json_raw(&j, "\"\"}");
     }
     else json_raw(&j, "null");
+    {
+        int on, secs, n, shown = 0; struct queue_entry up[6]; DWORD t0 = GetTickCount();
+        crossfade_get(&on, &secs);
+        json_raw(&j, ",\"crossfade\":{\"on\":%s,\"seconds\":%d},\"autoplay\":%s,\"upNext\":[", on ? "true" : "false", secs,
+                 queue_autoplay() ? "true" : "false");
+        n = st.has_item ? queue_upcoming(up, ARRAY_SIZE(up), 1) : 0;
+        for (int i = 0; i < n && shown < 5; i++)
+        {
+            char adam[32];
+            /* the queue's sections follow a track change a moment later than the now-playing
+             * item: skip the current item while it is still listed as up next */
+            if (up[i].id == st.queue_item_id) continue;
+            WideCharToMultiByte(CP_UTF8, 0, up[i].adam, -1, adam, sizeof(adam), NULL, NULL);
+            json_raw(&j, "%s{\"songId\":", shown++ ? "," : ""); json_str(&j, adam);
+            json_raw(&j, ",\"queueItemId\":\"%I64u\",\"section\":\"%s\"}", up[i].id, section_names[up[i].kind]);
+        }
+        json_raw(&j, "]");
+        if (GetTickCount() - t0 > 20) LOG("status: queue took %lu ms", GetTickCount() - t0);
+    }
     {   /* the agent watchdog: every agent call arms a 5 s timer; AgentIsHung while one overran.
          * AgentPhase names the call, but keeps its last value after a recovery, so only while hung */
         boolean hung = 0; HSTRING phase = NULL;
@@ -99,6 +122,96 @@ static void api_play(struct sreq *r)
     snprintf(r->body, sizeof(r->body), "{\"ok\":%s,\"hresult\":\"%08lx\",\"loadMs\":%lu}", SUCCEEDED(res.hr) ? "true" : "false", res.hr, res.ms);
 }
 
+/* POST /crossfade?on=0|1[&s=<seconds 1..12>] */
+static void api_crossfade(struct sreq *r)
+{
+    char on[8], sec[8]; int secs, now_on, now_s; HRESULT hr;
+    srv_param(r, "on", on, sizeof(on)); srv_param(r, "s", sec, sizeof(sec));
+    secs = sec[0] && all_digits(sec) ? atoi(sec) : -1;
+    if ((strcmp(on, "0") && strcmp(on, "1")) || (sec[0] && (secs < 1 || secs > 12)) || !get_playback_settings())
+    { reply(r, 400, "{\"ok\":false,\"error\":\"need on=0|1 and optionally s=<seconds 1..12>\"}"); return; }
+    hr = crossfade_set(on[0] == '1', secs > 0 ? secs : 0);
+    pump(100);
+    crossfade_get(&now_on, &now_s);
+    LOG("API crossfade on=%s s=%s -> %08lx, now on=%d %d s", on, sec, hr, now_on, now_s);
+    r->status = SUCCEEDED(hr) ? 200 : 500;
+    snprintf(r->body, sizeof(r->body), "{\"ok\":%s,\"hresult\":\"%08lx\",\"crossfade\":{\"on\":%s,\"seconds\":%d}}",
+             SUCCEEDED(hr) ? "true" : "false", hr, now_on ? "true" : "false", now_s);
+}
+
+/* POST /autoplay?on=0|1 */
+static void api_autoplay(struct sreq *r)
+{
+    char on[8]; HRESULT hr;
+    srv_param(r, "on", on, sizeof(on));
+    if (strcmp(on, "0") && strcmp(on, "1")) { reply(r, 400, "{\"ok\":false,\"error\":\"need on=0|1\"}"); return; }
+    hr = queue_set_autoplay(on[0] == '1');
+    for (int i = 0; i < 20 && SUCCEEDED(hr) && queue_autoplay() != (on[0] == '1'); i++) pump(50);
+    LOG("API autoplay %s -> %08lx, now %d", on, hr, queue_autoplay());
+    r->status = SUCCEEDED(hr) ? 200 : 500;
+    snprintf(r->body, sizeof(r->body), "{\"ok\":%s,\"hresult\":\"%08lx\",\"autoplay\":%s}",
+             SUCCEEDED(hr) ? "true" : "false", hr, queue_autoplay() ? "true" : "false");
+}
+
+/* POST /enqueue?song=<id>&album=<id>[&storefront=<cc>]: Play Next */
+static void api_enqueue(struct sreq *r)
+{
+    char song[32], album[32], cc[8];
+    struct play_request req; struct play_result res; struct player_status st; int playing;
+
+    srv_param(r, "song", song, sizeof(song)); srv_param(r, "album", album, sizeof(album));
+    srv_param(r, "storefront", cc, sizeof(cc));
+    if (!cc[0] && !GetEnvironmentVariableA("AM_STOREFRONT", cc, sizeof(cc))) strcpy(cc, "us");
+    if (!all_lower(cc)) strcpy(cc, "us");
+    if (!album[0] || !song[0] || !all_digits(album) || !all_digits(song) || !g_main_vm)
+    { reply(r, 400, "{\"ok\":false,\"error\":\"need song=<id>&album=<id>, numeric\"}"); return; }
+    player_status(&st);
+    playing = st.has_item && st.queue_item_id;
+    player_status_free(&st);
+    if (!playing) { reply(r, 409, "{\"ok\":false,\"error\":\"nothing playing\"}"); return; }
+
+    req.cc = cc; req.album = album; req.song = song; req.single = 0;
+    play_enqueue(&req, &res);
+    if (!res.found && SUCCEEDED(res.hr))
+    {
+        r->status = 404;
+        snprintf(r->body, sizeof(r->body), "{\"ok\":false,\"error\":\"item not found on the album page\",\"pageError\":%s,\"loadMs\":%lu}",
+                 res.page_error ? "true" : "false", res.ms);
+        return;
+    }
+    {   /* queueItemId "" when the song did not show up in the queue within 5 s */
+        char id[24] = "";
+        if (res.queue_item_id) sprintf(id, "%I64u", res.queue_item_id);
+        r->status = SUCCEEDED(res.hr) ? 200 : 500;
+        snprintf(r->body, sizeof(r->body), "{\"ok\":%s,\"hresult\":\"%08lx\",\"queueItemId\":\"%s\",\"loadMs\":%lu}",
+                 SUCCEEDED(res.hr) ? "true" : "false", res.hr, id, res.ms);
+    }
+}
+
+/* POST /dequeue[?id=<queueItemId>]: that item, or everything after the current one except autoplay.
+ * Never the current item: the sections still list it as up next for a moment after a track change */
+static void api_dequeue(struct sreq *r)
+{
+    static struct queue_entry up[VEC_MAX]; static UINT64 ids[VEC_MAX];
+    char id[32]; struct player_status st; UINT64 cur; int n = 0; HRESULT hr;
+    srv_param(r, "id", id, sizeof(id));
+    if (id[0] && !all_digits(id)) { reply(r, 400, "{\"ok\":false,\"error\":\"id must be a numeric queueItemId\"}"); return; }
+    player_status(&st);
+    cur = st.has_item ? st.queue_item_id : 0;
+    player_status_free(&st);
+    if (id[0]) { if ((ids[n] = _strtoui64(id, NULL, 10)) != cur) n++; }
+    else
+    {
+        int m = queue_upcoming(up, ARRAY_SIZE(up), 0);
+        for (int i = 0; i < m; i++) if (up[i].id != cur) ids[n++] = up[i].id;
+    }
+    hr = queue_delete(ids, n);
+    pump(100);
+    LOG("API dequeue id=%s: %d item(s) -> %08lx", id[0] ? id : "(all upcoming)", n, hr);
+    r->status = SUCCEEDED(hr) ? 200 : 500;
+    snprintf(r->body, sizeof(r->body), "{\"ok\":%s,\"hresult\":\"%08lx\",\"removed\":%d}", SUCCEEDED(hr) ? "true" : "false", hr, n);
+}
+
 /* POST /pause /resume /stop /next /previous: IPlayer methods without arguments */
 static const struct { const char *path; int slot; } simple_cmds[] = {
     { "/resume", 12 }, { "/pause", 13 }, { "/stop", 14 }, { "/previous", 16 }, { "/next", 17 },
@@ -115,6 +228,10 @@ void api_handle(struct sreq *r)
         if (!strcmp(r->path, simple_cmds[i].path)) { api_result(r, CALL1(player, simple_cmds[i].slot, &act)); return; }
     if (!strcmp(r->path, "/play")) api_play(r);
     else if (!strcmp(r->path, "/quality")) api_quality(r);
+    else if (!strcmp(r->path, "/crossfade")) api_crossfade(r);
+    else if (!strcmp(r->path, "/autoplay")) api_autoplay(r);
+    else if (!strcmp(r->path, "/enqueue")) api_enqueue(r);
+    else if (!strcmp(r->path, "/dequeue")) api_dequeue(r);
     else if (!strcmp(r->path, "/seek"))
     {
         INT64 ticks = _atoi64(srv_param(r, "ms", v, sizeof(v))) * 10000;     /* TimeSpan: 100 ns units */

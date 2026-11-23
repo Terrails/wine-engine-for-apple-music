@@ -55,6 +55,22 @@ HRESULT quality_set(const char *name)
     return hr;
 }
 
+void crossfade_get(int *on, int *seconds)
+{
+    void *ps = get_playback_settings(); boolean b = 0; INT32 v = 0;
+    if (ps) { CALL1(ps, 11, &b); CALL1(ps, 13, &v); }   /* CrossfadeSongs, CrossfadeValue (seconds) */
+    *on = b; *seconds = v;
+}
+
+HRESULT crossfade_set(int on, int seconds)
+{
+    void *ps = get_playback_settings(); HRESULT hr = S_OK;
+    if (!ps) return E_UNEXPECTED;
+    if (seconds) hr = ((HRESULT (WINAPI *)(void *, INT32))VT(ps)[14])(ps, seconds);    /* put_CrossfadeValue */
+    if (SUCCEEDED(hr)) hr = ((HRESULT (WINAPI *)(void *, boolean))VT(ps)[12])(ps, !!on);  /* put_CrossfadeSongs */
+    return hr;
+}
+
 /* Artist and Album of a catalogue item are empty; its Subtitle is "<artist> — <album>" */
 static void split_subtitle(void *ini, struct player_status *st)
 {
@@ -102,6 +118,7 @@ void player_status(struct player_status *st)
             IUnknown_Release((IUnknown *)cdd);
         }
         CALL1(ini, 30, &pos); CALL1(ini, 31, &dur); CALL1(ini, 24, &placeholder);
+        CALL1(ini, 45, &st->queue_item_id);           /* PlayQueueItemID */
         CALL1(ini, 38, &format); CALL1(ini, 39, &st->sample_rate); CALL1(ini, 40, &st->bit_depth);
         st->has_item = !placeholder && WindowsGetStringLen(st->title);
         if (format >= 0 && format < (INT32)ARRAY_SIZE(format_names)) st->format = format_names[format];

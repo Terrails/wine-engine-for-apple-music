@@ -4,7 +4,7 @@
 #include "common.h"
 
 /* IPlayer (Player.Instance), NULL until the app has one. Slots: 6 NowPlayingItem, 7 PlayerState,
- * 12 Play, 13 Pause, 14 Stop, 16 SkipPrevious, 17 SkipNext, 22 SetPositionAsync, 27 SetVolume */
+ * 8 StartOrQueueLibraryPlaybackAsync, 12 Play, 13 Pause, 14 Stop, 16 SkipPrevious, 17 SkipNext, 22 SetPositionAsync, 27 SetVolume */
 void *get_player(void);
 /* IPlaybackSettings (ServiceProvider.AppSettings.PlaybackSettings), or NULL */
 void *get_playback_settings(void);
@@ -13,6 +13,11 @@ void *get_playback_settings(void);
 const char *quality_get(void);
 /* set it from one of those names; returns E_INVALIDARG for anything else */
 HRESULT quality_set(const char *name);
+
+/* crossfade setting (IPlaybackSettings CrossfadeSongs / CrossfadeValue, in seconds) */
+void crossfade_get(int *on, int *seconds);
+/* set it; seconds 0 keeps the length */
+HRESULT crossfade_set(int on, int seconds);
 
 /* PlayerState / NowPlayingItem, read in one go */
 struct player_status
@@ -25,6 +30,7 @@ struct player_status
     HSTRING genre, release_date;   /* release date ISO 8601 */
     const char *format;            /* what is decoded now: other (= AAC), lossless, hires, atmos, spatial, surround */
     INT64 position_ms, duration_ms;
+    UINT64 queue_item_id;          /* PlayQueueItemID of the item, 0 if none */
 };
 void player_status(struct player_status *st);
 /* delete the strings player_status() returned */

@@ -53,7 +53,11 @@ HRESULT get_factory(const WCHAR *cls, IActivationFactory **factory)
 void *get_statics(const WCHAR *cls, REFIID iid)
 {
     IActivationFactory *f = NULL; void *statics = NULL;
-    if (SUCCEEDED(get_factory(cls, &f)) && f) IActivationFactory_QueryInterface(f, iid, &statics);
+    if (SUCCEEDED(get_factory(cls, &f)) && f)
+    {
+        IActivationFactory_QueryInterface(f, iid, &statics);
+        IActivationFactory_Release(f);
+    }
     return statics;
 }
 
@@ -64,6 +68,7 @@ INT32 await_async(void *op, DWORD step_ms, int max_steps, HRESULT *err)
     if (!op || FAILED(IUnknown_QueryInterface((IUnknown *)op, &IID_IAsyncInfo_, &info))) return 0;
     for (int i = 0; i < max_steps && !status; i++) { pump(step_ms); CALL1(info, 7, &status); }   /* get_Status */
     CALL1(info, 8, err);                                                                         /* get_ErrorCode */
+    IUnknown_Release((IUnknown *)info);
     return status;
 }
 

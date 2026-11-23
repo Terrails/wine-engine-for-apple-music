@@ -43,6 +43,10 @@ Working:
   across restarts. Hi-Res Lossless is selectable but has not been verified.
 - Playing a song in its album (next/previous follow the album), playing a whole album, pause,
   resume, stop, next, previous, seek, volume.
+- Gapless transitions inside the engine's queue: the next item starts when the current one
+  ends, without a new `/play` (continuous albums play without a dropout). "Play Next" of any
+  catalogue song without interrupting playback (`/enqueue`), removing queued items, the
+  autoplay switch, and the next items in the status.
 - Now-playing status: title, artist, album, genre, release date, catalogue song ID, position,
   duration, what is being decoded (format, sample rate, bit depth), and a flag when the engine
   stops responding.
@@ -52,9 +56,10 @@ Working:
   whether pushes are delivered has not been verified).
 - Repeated fast track switching without crashes or leaked audio streams.
 
-Not working or not there yet: video, gapless playback, push events in the API, queue,
-shuffle/repeat, lyrics and library browsing through the API, playing a song inside a playlist's
-or search result's context. See [KNOWN_ISSUES.md](KNOWN_ISSUES.md).
+Not working or not there yet: video, crossfade (the setting is kept but has no audible effect
+under Wine), push events in the API, reordering the queue, shuffle/repeat, lyrics and library
+browsing through the API, playing a song inside a playlist's or search result's context. See
+[KNOWN_ISSUES.md](KNOWN_ISSUES.md).
 
 ## How it works
 

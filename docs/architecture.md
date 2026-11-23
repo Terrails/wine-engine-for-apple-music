@@ -135,6 +135,7 @@ Slots below are those of the tested package version.
 | 20-26 | services: Activity, AgentDebug, Artwork, CloudLibrary, Library, Playback, VideoPlayback |
 | 27 | AppSettings (→ slot 8 `IPlaybackSettings`: streaming quality) |
 | 28 | DialogService |
+| 30 | MenuPresenter (`IMenuPresenterService`: 6 `GetObjectMenuItemsAsync`, the context menus) |
 | 31 | Navigation (→ slot 8 RootStack → slot 6 CurrentViewModel) |
 | 32 / 33 | NotificationCenter / PageNotificationCenter |
 | 34 | AccountViewModel (`IAccountViewModel` `{947f2669-…}`: 11 SignedIn, 12 IsEnrolledInMusic, 16 `SignInAsync`) |
@@ -183,7 +184,35 @@ library items only), so the wrapper does what a link does (`wrapper/src/play.c`)
 **Queue.** `PlayQueue.Current` → `IPlayQueue.Sections` (slot 9) stays empty until the "Up Next"
 panel is open. `queue_open()` (`wrapper/src/queue.c`) does what opening the panel does: sets
 `MainPageViewModel.IsPlayQueueOpen` and keeps a `PlayQueueViewModel` alive for the life of the
-process. Sections seen: now playing, the album ("up next"), autoplay.
+process. Sections (`IPlayQueueSection.SectionKind`, slot 6): 1 history, 2 now playing, 3 "Playing
+Next" (Play Next items), 4 the rest of the album, 5 autoplay; their items answer
+`IPlayQueueItem` (6 `PlayQueueItemID`). `IPlayQueue`: 8 `AutoPlayActive` (7 `AutoPlayEnabled`
+stays true), 12 `SetAutoPlayEnabledAsync`, 13 `PlayPlayQueueItemAsync`, 15
+`DeletePlayQueueItemsAsync(IVector<UINT64>)` (`/dequeue`). The status lists the items of
+sections 3-5 (`queue_upcoming()`); with the walk the status still answers in 1-2 ms. Methods
+that take a collection get `vec.c`'s small `IVector<T>` (with `IVectorView`, `IIterable` and
+`IIterator`; the pinterface IIDs for UINT64 and objects are in the file).
+
+### How `/enqueue` works (Play Next)
+
+There is no call that queues a catalogue song. `StartOrQueuePlaybackArgs` with `QueueNext` and a
+catalogue `ContentDescriptor`, passed to `IPlayer.StartOrQueueLibraryPlaybackAsync`, completes
+and adds nothing (library items only), and `IPlayQueueViewModel.InsertItemsIntoPlayQueue` takes
+drag data that is a list of queue item IDs (`[2831]`), so it only moves items. What works is
+the track's context menu, as the UI builds it (`wrapper/src/play.c`):
+
+1. Open the album page by deep link and find the song's row, as `/play` does. Navigating the
+   page model does not touch playback.
+2. `MenuPresenter.GetObjectMenuItemsAsync(NULL, [row])` → an `IVector<Object>` of menu items:
+   Add to Playlist (a submenu), Play "<title>", **Play Next**, Add to Queue, Create Station,
+   Properties, Share. `IMenuItem`: 6 Id (empty for these), 9 Title (localised), 11 Segue.
+3. Run the Play Next item's Segue like a play action (`dispatch_action()`). The song appears in
+   section 3 about 0.5 s later, before earlier Play Next items.
+
+Building the menu calls `AMP::Utils::ClipboardContainsContentDescriptors()`, which asks WinRT's
+`Windows.ApplicationModel.DataTransfer.Clipboard`; Wine has no such class, the call throws
+`0x80040154` and the whole menu fails. `app.c` redirects AMP.Services' import of that function
+to one that returns false.
 
 **Player.** `Player.Instance` (`IPlayer`): 6 NowPlayingItem, 7 PlayerState, 12 Play, 13 Pause,
 14 Stop, 16 SkipPrevious, 17 SkipNext, 19/20 shuffle/repeat mode, 22
@@ -194,7 +223,9 @@ process. Sections seen: now playing, the album ("up next"), autoplay.
 items Artist and Album are empty; the Subtitle reads `<artist> — <album>` and the wrapper
 splits it. Quality: `IPlaybackSettings` 21/22 `LosslessAudio`, 23/24
 `StreamingAudioQuality` (1 AAC 256, 2 lossless up to 48 kHz, 3 hi-res lossless up to
-192 kHz).
+192 kHz). Crossfade: 11/12 `CrossfadeSongs`, 13/14 `CrossfadeValue` in seconds (the agent keeps
+them as `crossfadeEnabled`/`crossfadeSeconds` in its preferences); the engine does not crossfade
+under Wine ([KNOWN_ISSUES.md](../KNOWN_ISSUES.md)).
 
 ## Sign-in and AuthKit
 
@@ -267,10 +298,11 @@ separate app preferences, while the ApplicationData settings (registry) are shar
 |---|---|
 | `main.c` | `amd.exe serve [port]` / `amd.exe signin`, exit codes |
 | `app.c` | start-up sequence above, `pump()` (message loop, queued dialogs, API requests) |
-| `play.c` | `/play`: album page by deep link, song in its album (album action + queue jump) |
+| `play.c` | `/play`: album page by deep link, song in its album (album action + queue jump); `/enqueue` (Play Next from the context menu) |
 | `page.c` | page model: deep links, walking a page's or container's items, `dispatch_action()` |
-| `queue.c` | the play queue: open it, find an item, jump to it |
-| `player.c` | `IPlayer`, playback settings (quality), status snapshot |
+| `queue.c` | the play queue: open it, find, list and remove items, jump to one, autoplay |
+| `vec.c` | a small `IVector<T>` for arguments the app wants as a collection |
+| `player.c` | `IPlayer`, playback settings (quality, crossfade), status snapshot |
 | `api.c` / `server.c` | API endpoints / HTTP server, token, JSON helpers |
 | `dialogs.c` | the `IDialogServiceImpl`, the first-run notice, NotificationCenter subscription |
 | `signin.c`, `akui.c`, `prompt.c` | sign-in flow, AuthKit UI provider (2FA, alerts), native prompt window |

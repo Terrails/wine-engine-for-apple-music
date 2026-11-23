@@ -15,6 +15,7 @@
 #include "akui.h"
 #include "cxxdbg.h"
 #include "dialogs.h"
+#include "iat.h"
 #include "medianame.h"
 #include "oslog.h"
 #include "server.h"
@@ -27,6 +28,11 @@ static const GUID IID_IMainPageViewModelStatics = {0x1de2686d,0x0295,0x5a19,{0x8
 static const GUID IID_IService = {0x02bf1b3f,0xdcc7,0x5e21,{0xb2,0x2b,0x79,0x50,0xbf,0xc2,0x6e,0x51}};
 
 void *g_sp, *g_main_vm;
+
+/* AMP::Utils::ClipboardContainsContentDescriptors() asks WinRT's Clipboard, which Wine does not
+ * have (class not registered), and that failure aborts building an item's context menu (the
+ * menu /enqueue uses for "Play Next"). Nothing is ever on the clipboard here. */
+static unsigned char no_clipboard_content(void) { return 0; }
 
 void pump(DWORD ms)
 {
@@ -150,6 +156,7 @@ int app_start(DWORD settle_ms)
     if (!m) return 1;
     oslog_hook_all();
     LOG("AuthKit UI provider installed: %d", akui_install());
+    LOG("clipboard check redirected: %d", iat_patch(m, "AMP.Utils.dll", "?ClipboardContainsContentDescriptors@Utils@AMP@winrt@@YA_NXZ", no_clipboard_content));
     {   /* AppleMusic.exe does this first thing in wWinMain */
         void (*oslog_init)(const char *) = (void *)GetProcAddress(GetModuleHandleA("AMP.Utils.dll"), "?OSLogInitialize@@YAXPEBD@Z");
         LOG("OSLogInitialize %p", oslog_init);

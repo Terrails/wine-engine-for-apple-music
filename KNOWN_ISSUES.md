@@ -13,16 +13,19 @@ queues the album and jumps to the song, so `next`/`previous` follow the album, n
 song was picked from. `queue=single` plays the song alone, after which the engine continues with
 its own autoplay.
 
-**Workaround:** keep the queue in the UI and send one `/play?...&queue=single` per item, pausing
-just before a track ends so the engine's autoplay never sounds. The Sidra fork does this with
-MusicKit's queue.
+**Workaround:** keep the queue in the UI: `/play?...&queue=single` for the first item, then
+`/enqueue` each next item while the current one plays (the engine continues into it by itself),
+and `/dequeue` when the UI's queue changes. `/autoplay?on=0` keeps the engine's autoplay from
+sounding after the last item.
 
-### No push events, queue, shuffle/repeat, lyrics or library in the API
+### No push events, full queue, shuffle/repeat, lyrics or library in the API
 
-The API offers playback control and a status snapshot only. There are no events (clients poll
-`GET /status`), no view or editing of the play queue, no shuffle or repeat mode, no lyrics, and no
-access to the library or playlists. The app has interfaces for these; they are not wired up. The
-app's own search is not used either.
+The API offers playback control, a status snapshot and a little of the queue: the next five
+items, Play Next (`/enqueue`), removing items and the autoplay switch. There are no events
+(clients poll `GET /status`), no view of the whole queue, no reordering and no "add to the end"
+(Add to Queue), no shuffle or repeat mode, no lyrics, and no access to the library or playlists.
+The app has interfaces for these; they are not wired up. The app's own search is not used
+either.
 
 **Workaround:** poll `/status` (a few times per second is fine); take catalogue, library, playlists
 and lyrics from another source, e.g. music.apple.com (the Sidra fork) or the public iTunes Search
@@ -38,13 +41,49 @@ can show the stale value.
 **Workaround:** trust the reported volume only while a track is playing; set it explicitly before
 playing if it matters.
 
-### No gapless playback
+### Crossfade has no effect
 
-Every track is started with a separate `/play`, which loads the album page first. Between two
-tracks there is a gap of about 1-3 s. Occasionally (about one in a dozen quick switches) the page
-loads without the requested item and the service navigates again, which takes 3.5 s or more.
+`/crossfade` sets the app's crossfade setting, which is stored, read back and kept across
+restarts, but under Wine the engine never crossfades: with it on (6 s and 12 s) the outgoing
+track played at full level up to its own end and the next one started after it, with one audio
+stream at a time, the same as with crossfade off. Measured on album transitions, Play Next items
+and autoplay. Why the engine does not mix the two tracks is not known.
 
-**Workaround:** none.
+**Workaround:** none; transitions are gapless or nearly so (next entry).
+
+### Short silence between tracks of different albums
+
+Tracks that follow each other in the engine's queue start without a new `/play`. Consecutive
+tracks of an album in the same format are gapless (one audio stream, no dropout). Between tracks
+of different albums (a Play Next item, autoplay) the engine replaces its audio stream: measured
+0.66-0.91 s of digital silence including the first track's own fade-out tail, about 0.2 s of it
+with no stream at all. A UI that starts every track with its own `/play` instead has a gap of
+1-3 s (the album page loads first; about one switch in a dozen needs a second navigation, 3.5 s
+or more).
+
+**Workaround:** use `/enqueue` for the next track instead of `/play` (see
+[docs/api.md](docs/api.md), "Queue and seamless playback").
+
+### "Play Next" goes through the song's context menu
+
+There is no direct call for queueing a catalogue song, so `/enqueue` opens the album page, builds
+the track's context menu the way the app's UI does and runs its "Play Next" item. The menu items
+carry no IDs; the item is found by its title "Play Next", or, in another UI language, as the item
+after the one naming the track. Building the menu needs a clipboard check that Wine cannot
+answer; the service redirects it (nothing is ever on the clipboard). A later app version may
+change the menu.
+
+**Workaround:** none needed with the supported version; a 500 with `hresult` `80004001` means
+the menu had no Play Next.
+
+### `/enqueue` blocks the other requests
+
+Requests are handled one at a time on the engine's thread, and `/enqueue` loads the album page
+like `/play` and then builds a context menu (typically 0.7-1.4 s, up to about 20 s; 404 after
+about 13 s for a song that is not on the page). `/status` waits meanwhile.
+
+**Workaround:** enqueue the next track 20-30 s before the current one ends, not at the last
+moment, and allow for a slow status answer meanwhile.
 
 ### Audio clicks in long sessions are not ruled out
 

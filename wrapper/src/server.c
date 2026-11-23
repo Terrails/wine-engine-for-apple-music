@@ -67,7 +67,7 @@ static void srv_send(SOCKET s, int status, const char *body)
 {
     char hdr[256];
     const char *text = status == 200 ? "OK" : status == 401 ? "Unauthorized" : status == 404 ? "Not Found" :
-                       status == 405 ? "Method Not Allowed" : status == 503 ? "Service Unavailable" : "Error";
+                       status == 405 ? "Method Not Allowed" : status == 409 ? "Conflict" : status == 503 ? "Service Unavailable" : "Error";
     int n = snprintf(hdr, sizeof(hdr), "HTTP/1.1 %d %s\r\nContent-Type: application/json; charset=utf-8\r\n"
                      "Content-Length: %u\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n", status, text, (unsigned)strlen(body));
     send(s, hdr, n, 0);

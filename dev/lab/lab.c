@@ -259,7 +259,7 @@ static int pick_cb(const struct page_item *it, void *ctx)
 {
     struct pick *p = ctx;
     if (p->adam) { if (!wcscmp(wz(it->adam), p->adam)) { p->id = queue_item_id(it->item); return p->id != 0; } return 0; }
-    if (it->section == p->section && it->index == p->index) { p->action = it->action; return 1; }
+    if (it->section == p->section && it->index == p->index) { p->action = it->action; if (p->action) IInspectable_AddRef(p->action); return 1; }
     return 0;
 }
 

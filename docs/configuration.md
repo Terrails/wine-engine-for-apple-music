@@ -86,7 +86,7 @@ only for being set: `0` turns them **on** as well; unset them to turn them off.
 | `WINE_INCLUDE_DIR` | searched | `shim/ps/build.sh` | the directory holding Wine's IDL files (`inspectable.idl`) for `widl`, when the search next to `widl` and in the usual package locations does not find it | none |
 | `AM_SHIMS_BUILT` | unset | `shim/install.sh`, `shim/build.sh`, `shim/ps/build.sh` | internal: set to `1` by `setup-prefix.sh`, which has just built the shims, so `shim/install.sh` only installs them | none |
 | `WINMD_DIR` | unset | `tools/q`, `make lab` (`dev/lab/iids.sh`) | dev: metadata directory to read instead of the default (`tools/q`: the SDK metadata; `make lab`: the installed app, then `$AM_CACHE_DIR/msix/<version>`), e.g. the app's own `.winmd` files ([development.md](development.md)) | none |
-| `MOCK_SPEED`, `MOCK_AUTOPLAY` | `1`, unset | `test/mock-daemon.mjs` | dev: clock multiplier of the mock service; `MOCK_AUTOPLAY=1`: an unrelated track follows the end of the last one, like the engine's autoplay | none |
+| `MOCK_SPEED`, `MOCK_AUTOPLAY`, `MOCK_NO_SEAMLESS` | `1`, unset, unset | `test/mock-daemon.mjs` | dev: clock multiplier of the mock service; `MOCK_AUTOPLAY=1`: the engine's autoplay starts on (an unrelated track follows the end of the queue); `MOCK_NO_SEAMLESS=1`: the mock acts as an older service without the queue API | none |
 | `AM_AGENT_DIR`, `AM_WEBUI_*` | | the Sidra fork | where the fork finds this checkout, and the fork's own settings: see `README-agent.md` in the fork's `wine-engine` branch | see there |
 
 Other variables that are useful here:

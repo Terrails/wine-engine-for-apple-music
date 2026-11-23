@@ -16,9 +16,9 @@ void *current_content_page(void)
 {
     void *nav = NULL, *stack = NULL, *page = NULL; IUnknown *vm = NULL;
     CALL1(g_sp, 31, &nav);                  /* ServiceProvider.Navigation */
-    if (nav) CALL1(nav, 8, &stack);         /* RootStack */
-    if (stack) CALL1(stack, 6, &vm);        /* CurrentViewModel */
-    if (vm) IUnknown_QueryInterface(vm, &IID_IContentPageViewModel, &page);
+    if (nav) { CALL1(nav, 8, &stack); IUnknown_Release((IUnknown *)nav); }      /* RootStack */
+    if (stack) { CALL1(stack, 6, &vm); IUnknown_Release((IUnknown *)stack); }   /* CurrentViewModel */
+    if (vm) { IUnknown_QueryInterface(vm, &IID_IContentPageViewModel, &page); IUnknown_Release(vm); }
     return page;
 }
 
@@ -30,15 +30,22 @@ void page_state(void *cpage, boolean *loading, boolean *error, void **page)
     CALL1(cpage, 18, page);
 }
 
-int items_walk_in(IUnknown *items, IUnknown *container, UINT32 si, page_item_cb cb, void *ctx);
+static int items_walk_in(IUnknown *items, IUnknown *container, UINT32 si, page_item_cb cb, void *ctx);
 
 int container_walk(IUnknown *section, UINT32 si, page_item_cb cb, void *ctx, int log_sections)
 {
-    IUnknown *items = NULL; void *cont = NULL; HSTRING sid = NULL;
-    CALL1(section, 6, &sid);                /* IComponentModel.Id */
-    if (SUCCEEDED(IUnknown_QueryInterface(section, &IID_IComponentModelContainer, &cont))) CALL1(cont, 6, &items);
+    IUnknown *items = NULL; void *cont = NULL; HSTRING sid = NULL; int r;
+    if (log_sections) CALL1(section, 6, &sid);     /* IComponentModel.Id */
+    if (SUCCEEDED(IUnknown_QueryInterface(section, &IID_IComponentModelContainer, &cont)))
+    {
+        CALL1(cont, 6, &items);
+        IUnknown_Release((IUnknown *)cont);
+    }
     if (log_sections) LOG("section %u id='%s'", si, ws(sid));
-    return items ? items_walk_in(items, section, si, cb, ctx) : 0;
+    WindowsDeleteString(sid);
+    r = items ? items_walk_in(items, section, si, cb, ctx) : 0;
+    if (items) IUnknown_Release(items);
+    return r;
 }
 
 int items_walk(IUnknown *items, UINT32 si, page_item_cb cb, void *ctx)
@@ -46,40 +53,52 @@ int items_walk(IUnknown *items, UINT32 si, page_item_cb cb, void *ctx)
     return items_walk_in(items, NULL, si, cb, ctx);
 }
 
-int items_walk_in(IUnknown *items, IUnknown *container, UINT32 si, page_item_cb cb, void *ctx)
+/* everything the walk got for one item is released after the callback (which AddRefs what it keeps) */
+static void page_item_free(struct page_item *it)
 {
-    void *vec = NULL; UINT32 n = 0;
+    WindowsDeleteString(it->cls); WindowsDeleteString(it->title); WindowsDeleteString(it->adam);
+    if (it->action) IInspectable_Release(it->action);
+    if (it->cd) IUnknown_Release((IUnknown *)it->cd);
+    IInspectable_Release(it->item);
+}
+
+static int items_walk_in(IUnknown *items, IUnknown *container, UINT32 si, page_item_cb cb, void *ctx)
+{
+    void *vec = NULL; UINT32 n = 0; int r = 0;
     if (items) IUnknown_QueryInterface(items, &IID_IVector_IComponentModel, &vec);
     if (vec) CALL1(vec, 7, &n);
-    for (UINT32 i = 0; vec && i < n && i < 500; i++)
+    for (UINT32 i = 0; vec && i < n && i < 500 && !r; i++)
     {
         struct page_item it = { si, i, container };
         void *tc = NULL, *pa = NULL, *cdd = NULL;
         ((HRESULT (WINAPI *)(void *, UINT32, void **))VT(vec)[6])(vec, i, (void **)&it.item);
         if (!it.item) continue;
         IInspectable_GetRuntimeClassName(it.item, &it.cls);
-        if (SUCCEEDED(IInspectable_QueryInterface(it.item, &IID_ITitledComponent, &tc))) CALL1(tc, 6, &it.title);
-        if (SUCCEEDED(IInspectable_QueryInterface(it.item, &IID_IPlayActionDriven, &pa))) CALL1(pa, 6, &it.action);
-        if (SUCCEEDED(IInspectable_QueryInterface(it.item, &IID_IContentDescriptorDriven, &cdd))) CALL1(cdd, 6, &it.cd);
+        if (SUCCEEDED(IInspectable_QueryInterface(it.item, &IID_ITitledComponent, &tc))) { CALL1(tc, 6, &it.title); IUnknown_Release((IUnknown *)tc); }
+        if (SUCCEEDED(IInspectable_QueryInterface(it.item, &IID_IPlayActionDriven, &pa))) { CALL1(pa, 6, &it.action); IUnknown_Release((IUnknown *)pa); }
+        if (SUCCEEDED(IInspectable_QueryInterface(it.item, &IID_IContentDescriptorDriven, &cdd))) { CALL1(cdd, 6, &it.cd); IUnknown_Release((IUnknown *)cdd); }
         if (it.cd) CALL1(it.cd, 21, &it.adam);
-        if (cb(&it, ctx)) return 1;
+        r = cb(&it, ctx);
+        page_item_free(&it);
     }
-    return 0;
+    if (vec) IUnknown_Release((IUnknown *)vec);
+    return r;
 }
 
 void page_walk(void *cpage, page_item_cb cb, void *ctx, int log_sections)
 {
-    void *page = NULL;
+    void *page = NULL; int r = 0;
     CALL1(cpage, 18, &page);
     if (!page) { LOG("PAGE has no page object"); return; }
-    for (UINT32 si = 0; si < 40; si++)
+    for (UINT32 si = 0; si < 40 && !r; si++)
     {
         boolean has = 0; IUnknown *sec = NULL;
         ((HRESULT (WINAPI *)(void *, UINT32, boolean *))VT(page)[30])(page, si, &has);        /* HasSectionAtIndex */
         if (!has) break;
         ((HRESULT (WINAPI *)(void *, UINT32, void **))VT(page)[31])(page, si, (void **)&sec); /* TryGetSectionAtIndex */
-        if (sec && container_walk(sec, si, cb, ctx, log_sections)) return;
+        if (sec) { r = container_walk(sec, si, cb, ctx, log_sections); IUnknown_Release(sec); }
     }
+    IUnknown_Release((IUnknown *)page);
 }
 
 struct find_ctx { const WCHAR *want; int verbose; IInspectable *found; };
@@ -95,6 +114,7 @@ static int find_cb(const struct page_item *it, void *ctx)
         (f->verbose && (wcsstr(wz(it->cls), f->want) || wcsstr(wz(it->title), f->want))))
     {
         f->found = it->action;
+        IInspectable_AddRef(f->found);
         if (f->verbose) LOG("PAGE   -> chose [%u] title='%s' adamId='%s'", it->index, ws(it->title), ws(it->adam));
         else return 1;
     }
@@ -127,11 +147,17 @@ HRESULT open_deeplink(const WCHAR *url)
 
 HRESULT dispatch_action(IInspectable *action)
 {
-    void *naf = get_statics(L"AMP.Services.NotificationArgs", &IID_INotificationArgsFactory), *nargs = NULL, *nc = NULL, *act = NULL;
+    static void *naf;
+    void *nargs = NULL, *nc = NULL, *act = NULL;
     HRESULT hr = E_FAIL;
+    if (!naf) naf = get_statics(L"AMP.Services.NotificationArgs", &IID_INotificationArgsFactory);
     if (naf) hr = ((HRESULT (WINAPI *)(void *, UINT32, void *, void **))VT(naf)[6])(naf, EVENT_DISPATCH, action, &nargs);
     if (FAILED(hr) || !nargs) return FAILED(hr) ? hr : E_FAIL;
     CALL1(g_sp, 32, &nc);                    /* ServiceProvider.NotificationCenter */
-    if (!nc) return E_FAIL;
-    return ((HRESULT (WINAPI *)(void *, void *, void **))VT(nc)[6])(nc, nargs, &act);   /* PostAsync */
+    if (nc) hr = ((HRESULT (WINAPI *)(void *, void *, void **))VT(nc)[6])(nc, nargs, &act);   /* PostAsync (started, not awaited) */
+    else hr = E_FAIL;
+    if (act) IUnknown_Release((IUnknown *)act);
+    if (nc) IUnknown_Release((IUnknown *)nc);
+    IUnknown_Release((IUnknown *)nargs);
+    return hr;
 }

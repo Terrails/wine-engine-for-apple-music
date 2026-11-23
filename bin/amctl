@@ -5,10 +5,12 @@
 #        amctl play <songId> <albumId> [storefront]   (the album, starting at the song)
 #        amctl play-single <songId> <albumId> [storefront]   |   amctl play-album <albumId> [storefront]
 #        amctl seek <ms>   |   amctl volume <0..1>   |   amctl quality aac|lossless|hires
+#        amctl enqueue <songId> <albumId> [storefront]   (Play Next)   |   amctl dequeue [queueItemId]
+#        amctl crossfade on|off [seconds 1..12]   |   amctl autoplay on|off
 ROOT="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
 . "$ROOT/bin/amd-env.sh"
 PORT=${AM_PORT:-7654}
-[ -n "$1" ] || { sed -n '4,7s/^# //p' "$(readlink -f "$0")"; exit 2; }
+[ -n "$1" ] || { sed -n '4,9s/^# //p' "$(readlink -f "$0")"; exit 2; }
 TOKEN=$(am_token)
 [ -n "$TOKEN" ] || { echo "no token file: is the service running?" >&2; exit 1; }
 # exit status: curl's (non-zero when the service cannot be reached or answers with an HTTP error;
@@ -26,5 +28,10 @@ case "$1" in
     seek) call POST "/seek?ms=$2" ;;
     quality) call POST "/quality?q=$2" ;;
     volume) call POST "/volume?v=$2" ;;
-    *) sed -n '4,7s/^# //p' "$(readlink -f "$0")"; exit 2 ;;
+    enqueue) call POST "/enqueue?song=$2&album=$3${4:+&storefront=$4}" ;;
+    dequeue) call POST "/dequeue${2:+?id=$2}" ;;
+    crossfade|autoplay)
+        case "$2" in on) v=1 ;; off) v=0 ;; *) sed -n '4,9s/^# //p' "$(readlink -f "$0")"; exit 2 ;; esac
+        if [ "$1" = crossfade ]; then call POST "/crossfade?on=$v${3:+&s=$3}"; else call POST "/autoplay?on=$v"; fi ;;
+    *) sed -n '4,9s/^# //p' "$(readlink -f "$0")"; exit 2 ;;
 esac

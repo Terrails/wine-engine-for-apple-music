@@ -10,6 +10,7 @@
 #include "page.h"
 #include "player.h"
 #include "queue.h"
+#include "vec.h"
 
 #define JUMP_WAIT_MS 5000      /* how long the album may take to appear in the queue */
 
@@ -80,50 +81,182 @@ static HRESULT play_in_album(IInspectable *whole, IInspectable *track, const WCH
     return hr;
 }
 
+/* open the album page and wait (up to 10 s, navigating again when needed) until ready() finds
+ * what is needed on it; returns nonzero then. Sets res->page_error. */
+typedef int (*page_ready_fn)(void *cpage, void *page, int loading, void *ctx);
+
+static int load_album_page(const struct play_request *req, page_ready_fn ready_fn, void *ctx, struct play_result *res,
+                           const char *what)
+{
+    WCHAR url[256];
+    boolean loading = 1, err = 0; DWORD t0 = GetTickCount(); int ready = 0;
+
+    if (req->song[0]) swprintf(url, ARRAY_SIZE(url), L"musics://music.apple.com/%hs/album/%hs?i=%hs", req->cc, req->album, req->song);
+    else swprintf(url, ARRAY_SIZE(url), L"musics://music.apple.com/%hs/album/%hs", req->cc, req->album);
+    if (FAILED(res->hr = open_deeplink(url))) return 0;
+
+    for (int i = 0; i < 100 && !ready; i++)             /* up to 10 s */
+    {
+        void *cpage, *page = NULL;
+        pump(100);
+        if (!(cpage = current_content_page())) continue;
+        page_state(cpage, &loading, &err, &page);
+        if (page && i >= 2) ready = ready_fn(cpage, page, loading, ctx);
+        /* now and then (about 1 in 12 quick switches) the navigation ends on a loaded page without
+         * the item, and stays that way; asking again works */
+        if (page && !ready && !loading && (i == 25 || i == 55))
+        {
+            LOG("%s: item not on the page after %lu ms, navigating again", what, GetTickCount() - t0);
+            open_deeplink(url);
+        }
+        if (page && !ready && i == 99) page_list(cpage, NULL);
+        if (page) IUnknown_Release((IUnknown *)page);
+        IUnknown_Release((IUnknown *)cpage);
+        if (oslog_agent_lost) break;
+    }
+    LOG("%s song=%s album=%s -> %s after %lu ms (loading=%d pageError=%d)", what, req->song, req->album,
+        ready ? "found" : "NOT FOUND", GetTickCount() - t0, loading, err);
+    res->page_error = err;
+    res->found = ready;
+    return ready;
+}
+
+struct play_ctx { const WCHAR *song, *album; IInspectable *track, *whole; const char **how; };
+
+static int play_ready(void *cpage, void *page, int loading, void *ctx)
+{
+    struct play_ctx *p = ctx;
+    return find_actions(cpage, page, loading, p->song, p->album, &p->track, &p->whole, p->how);
+}
+
 void play_catalog(const struct play_request *req, struct play_result *res)
 {
-    WCHAR url[256], song[32], album[32];
-    void *cpage = NULL, *page = NULL; IInspectable *track = NULL, *whole = NULL;
-    boolean loading = 1, err = 0; DWORD t0 = GetTickCount(); int ready = 0;
+    WCHAR song[32], album[32];
+    struct play_ctx p = { song, album, NULL, NULL, &res->how };
+    DWORD t0 = GetTickCount();
 
     memset(res, 0, sizeof(*res));
     res->how = "direct";
     queue_open();
     MultiByteToWideChar(CP_UTF8, 0, req->song, -1, song, ARRAY_SIZE(song));
     MultiByteToWideChar(CP_UTF8, 0, req->album, -1, album, ARRAY_SIZE(album));
-    if (song[0]) swprintf(url, ARRAY_SIZE(url), L"musics://music.apple.com/%hs/album/%hs?i=%hs", req->cc, req->album, req->song);
-    else swprintf(url, ARRAY_SIZE(url), L"musics://music.apple.com/%hs/album/%hs", req->cc, req->album);
-    if (FAILED(res->hr = open_deeplink(url))) return;
-
-    for (int i = 0; i < 100 && !ready; i++)             /* up to 10 s */
-    {
-        pump(100);
-        if (!(cpage = current_content_page())) continue;
-        page_state(cpage, &loading, &err, &page);
-        if (!page || i < 2) continue;
-        ready = find_actions(cpage, page, loading, song, album, &track, &whole, &res->how);
-        if (oslog_agent_lost) break;
-        /* now and then (about 1 in 12 quick switches) the navigation ends on a loaded page without
-         * the item, and stays that way; asking again works */
-        if (!ready && !loading && (i == 25 || i == 55))
-        {
-            LOG("play: item not on the page after %lu ms, navigating again", GetTickCount() - t0);
-            open_deeplink(url);
-        }
-    }
-    LOG("play song=%s album=%s -> %s after %lu ms (loading=%d pageError=%d album action=%s)", req->song, req->album,
-        ready ? "found" : "NOT FOUND", GetTickCount() - t0, loading, err, whole ? "yes" : "no");
-    res->page_error = err;
-    if (!ready)
-    {
-        if (cpage && page) page_list(cpage, NULL);
-        res->ms = GetTickCount() - t0;
-        return;
-    }
-    res->found = 1;
-    if (!song[0]) res->hr = dispatch_action(whole);
-    else if (req->single || !whole) { res->hr = dispatch_action(track); res->how = "song alone"; }
-    else res->hr = play_in_album(whole, track, song, &res->how);
+    if (!load_album_page(req, play_ready, &p, res, "play")) { res->ms = GetTickCount() - t0; return; }
+    if (!song[0]) res->hr = dispatch_action(p.whole);
+    else if (req->single || !p.whole) { res->hr = dispatch_action(p.track); res->how = "song alone"; }
+    else res->hr = play_in_album(p.whole, p.track, song, &res->how);
     res->ms = GetTickCount() - t0;
     LOG("play dispatched (%s) -> %08lx at %lu ms", res->how, res->hr, res->ms);
+    if (p.track) IInspectable_Release(p.track);
+    if (p.whole) IInspectable_Release(p.whole);
+}
+
+/* ---- Play Next ----
+ * The app has no "queue this catalogue song" call (IPlayer.StartOrQueueLibraryPlaybackAsync with
+ * QueueNext accepts catalogue descriptors and does nothing; IPlayQueueViewModel's
+ * InsertItemsIntoPlayQueue only moves queue items). What the UI does is the track's context menu:
+ * MenuPresenter.GetObjectMenuItemsAsync(sender, [row]) builds it (Play "<title>", Play Next,
+ * Add to Queue, Create Station, ...) and the chosen item's Segue is an action run like a play
+ * action. The items have no IDs, only localised titles. */
+static const GUID IID_IMenuItem = {0xbc1ce5b9,0x11c2,0x5748,{0x9e,0x5e,0xa7,0xfb,0x27,0x48,0x01,0x01}};
+static const GUID IID_IVector_IInspectable = {0xb32bdca4,0x5e52,0x5b27,{0xbc,0x5d,0xd6,0x6a,0x1a,0x26,0x8c,0x2a}};
+
+#define ENQUEUE_WAIT_MS 5000   /* how long the song may take to appear in the queue */
+
+struct row_ctx { const WCHAR *song; IInspectable *item; HSTRING title; };
+
+static int row_cb(const struct page_item *it, void *ctx)
+{
+    struct row_ctx *r = ctx;
+    if (!it->action || wcscmp(wz(it->adam), r->song)) return 0;   /* the track row has a play action */
+    r->item = it->item;
+    IInspectable_AddRef(r->item);
+    WindowsDuplicateString(it->title, &r->title);
+    return 1;
+}
+
+static int row_ready(void *cpage, void *page, int loading, void *ctx)
+{
+    struct row_ctx *r = ctx;
+    if (!r->item) page_walk(cpage, row_cb, r, 0);
+    return r->item != NULL;
+}
+
+/* the Segue of the menu's "Play Next": the item titled so, else (another UI language) the item
+ * right after the one naming the track (Play "<title>") */
+static IInspectable *play_next_segue(IInspectable *menu, const WCHAR *title)
+{
+    void *v = NULL; UINT32 n = 0; IInspectable *found = NULL, *after_play = NULL; int prev_names_track = 0;
+    if (FAILED(IInspectable_QueryInterface(menu, &IID_IVector_IInspectable, &v))) return NULL;
+    CALL1(v, 7, &n);
+    for (UINT32 i = 0; i < n && !found; i++)
+    {
+        IInspectable *mi = NULL, *segue = NULL; void *m = NULL; HSTRING t = NULL; int names_track = 0;
+        ((HRESULT (WINAPI *)(void *, UINT32, void **))VT(v)[6])(v, i, (void **)&mi);
+        if (mi && SUCCEEDED(IInspectable_QueryInterface(mi, &IID_IMenuItem, &m)))
+        {
+            CALL1(m, 9, &t); CALL1(m, 11, &segue);                    /* Title, Segue */
+            IUnknown_Release((IUnknown *)m);
+            names_track = title[0] && wcsstr(wz(t), title);
+            if (segue && !wcscmp(wz(t), L"Play Next")) { found = segue; segue = NULL; }
+            else if (segue && prev_names_track && !after_play) { after_play = segue; segue = NULL; }
+            if (segue) IInspectable_Release(segue);
+            WindowsDeleteString(t);
+        }
+        prev_names_track = names_track;
+        if (mi) IInspectable_Release(mi);
+    }
+    IUnknown_Release((IUnknown *)v);
+    if (found) { if (after_play) IInspectable_Release(after_play); return found; }
+    if (after_play) LOG("enqueue: no item titled \"Play Next\" in the menu, using the one after the item naming the track");
+    return after_play;
+}
+
+/* build the row's context menu and run its Play Next */
+static HRESULT run_play_next(IInspectable *row, const WCHAR *title)
+{
+    void *mp = NULL, *vec, *op = NULL; IInspectable *menu = NULL, *segue; HRESULT hr, err = S_OK; INT32 st;
+    CALL1(g_sp, 30, &mp);                            /* ServiceProvider.MenuPresenter */
+    if (!mp) return E_FAIL;
+    if (!(vec = vec_new(VEC_INSPECTABLE, &row, 1))) { IUnknown_Release((IUnknown *)mp); return E_OUTOFMEMORY; }
+    hr = ((HRESULT (WINAPI *)(void *, void *, void *, void **))VT(mp)[6])(mp, NULL, vec, &op);   /* GetObjectMenuItemsAsync */
+    IUnknown_Release((IUnknown *)vec);
+    IUnknown_Release((IUnknown *)mp);
+    if (FAILED(hr) || !op) return FAILED(hr) ? hr : E_FAIL;
+    st = await_async(op, 20, 250, &err);                                  /* up to 5 s */
+    if (st == 1) ((HRESULT (WINAPI *)(void *, void **))VT(op)[8])(op, (void **)&menu);   /* GetResults */
+    IUnknown_Release((IUnknown *)op);
+    if (!menu) { LOG("enqueue: no context menu (status %d, %08lx)", st, err); return FAILED(err) ? err : E_FAIL; }
+    segue = play_next_segue(menu, title);
+    IInspectable_Release(menu);
+    if (!segue) { LOG("enqueue: the context menu has no Play Next"); return E_NOTIMPL; }
+    hr = dispatch_action(segue);
+    IInspectable_Release(segue);
+    return hr;
+}
+
+void play_enqueue(const struct play_request *req, struct play_result *res)
+{
+    WCHAR song[32];
+    struct row_ctx r = { song, NULL, NULL };
+    DWORD t0 = GetTickCount(), t1; UINT64 before; INT32 kind = 0;
+
+    memset(res, 0, sizeof(*res));
+    res->how = "play next";
+    queue_open();
+    MultiByteToWideChar(CP_UTF8, 0, req->song, -1, song, ARRAY_SIZE(song));
+    if (!load_album_page(req, row_ready, &r, res, "enqueue")) { res->ms = GetTickCount() - t0; return; }
+    before = queue_max_id();
+    res->hr = run_play_next(r.item, wz(r.title));
+    t1 = GetTickCount();
+    while (SUCCEEDED(res->hr) && !res->queue_item_id && GetTickCount() - t1 < ENQUEUE_WAIT_MS && !oslog_agent_lost)
+    {
+        pump(50);
+        res->queue_item_id = queue_find(song, before, &kind);
+    }
+    res->kind = kind;
+    res->ms = GetTickCount() - t0;
+    LOG("enqueue song=%s -> %08lx, queue item %I64u (section kind %d) after %lu ms (%lu ms after Play Next)", req->song,
+        res->hr, res->queue_item_id, kind, res->ms, GetTickCount() - t1);
+    IInspectable_Release(r.item);
+    WindowsDeleteString(r.title);
 }
