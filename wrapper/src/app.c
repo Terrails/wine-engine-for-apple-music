@@ -36,14 +36,15 @@ static unsigned char no_clipboard_content(void) { return 0; }
 
 void pump(DWORD ms)
 {
-    DWORD end = GetTickCount() + ms; MSG msg;
+    DWORD end = GetTickCount() + ms; int left; MSG msg;
     while ((int)(end - GetTickCount()) > 0)
     {
         while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) { TranslateMessage(&msg); DispatchMessageW(&msg); }
         dialogs_process();
         server_process();
         media_name_tick();
-        MsgWaitForMultipleObjects(0, NULL, FALSE, 50, QS_ALLINPUT);
+        left = end - GetTickCount();
+        if (left > 0) MsgWaitForMultipleObjects(0, NULL, FALSE, left < 50 ? left : 50, QS_ALLINPUT);
     }
 }
 

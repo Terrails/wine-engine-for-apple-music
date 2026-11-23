@@ -74,16 +74,113 @@ static void srv_send(SOCKET s, int status, const char *body)
     send(s, body, strlen(body), 0);
 }
 
-static void srv_connection(SOCKET s)
+#define SRV_MAX_CONN 16        /* connection threads at once; more wait in the listen backlog */
+#define SRV_HEADER_MS 5000     /* the whole request head must arrive within this time */
+#define SRV_WAIT_MS 60000      /* how long a request may wait for the main thread */
+#define SRV_ORDER_MS 50        /* how long a request lets connections accepted before it get queued first */
+
+static volatile LONG srv_conns;
+static struct srv_conn { SOCKET s; DWORD seq; int used, reading; } srv_slots[SRV_MAX_CONN];   /* under srv_cs */
+static int srv_status_ok, srv_nested;   /* main thread only: see server_process() */
+
+/* take the first queued request off the list (status_only: the first GET /status); call with srv_cs held */
+static struct sreq *srv_take_locked(int status_only)
 {
+    struct sreq *r, *prev = NULL;
+    for (r = srv_head; r; prev = r, r = r->next)
+        if (!status_only || (!strcmp(r->method, "GET") && !strcmp(r->path, "/status"))) break;
+    if (!r) return NULL;
+    if (prev) prev->next = r->next; else srv_head = r->next;
+    if (srv_tail == r) srv_tail = prev;
+    r->next = NULL;
+    r->taken = 1;
+    return r;
+}
+
+static void srv_free(struct sreq *r) { CloseHandle(r->done); free(r); }
+
+/* the client closed its end while the request was waiting */
+static int srv_client_gone(SOCKET s)
+{
+    fd_set fds; struct timeval tv = {0, 0}; char c;
+    FD_ZERO(&fds); FD_SET(s, &fds);
+    if (select(0, &fds, NULL, NULL, &tv) <= 0) return 0;
+    return recv(s, &c, 1, MSG_PEEK) <= 0;
+}
+
+/* wait for the main thread to answer r; returns 1 when it has (r is then ours to send and free), 0 when
+ * we gave up. After SRV_WAIT_MS a request that still waits is removed (the client is told it did not run).
+ * A command whose client is gone still runs, like any request already running, and the main thread frees
+ * it: a client that only fires a command must get it done (Sidra sends /quit and exits within 3 s). Clients that
+ * closed their end are looked for only when connections run short: some just half-close and still read. */
+static int srv_wait(SOCKET s, struct sreq *r)
+{
+    DWORD t0 = GetTickCount(); int done, gone = 0, ours = 0;
+    while (!(done = WaitForSingleObject(r->done, 100) == WAIT_OBJECT_0))
+        if (GetTickCount() - t0 >= SRV_WAIT_MS || (gone = srv_conns > SRV_MAX_CONN / 2 && srv_client_gone(s))) break;
+    if (done) return 1;
+    EnterCriticalSection(&srv_cs);
+    if (r->finished) done = 1;
+    else if (r->taken || (gone && strcmp(r->method, "GET"))) r->abandoned = 1;
+    else
+    {
+        struct sreq **p = &srv_head, *prev = NULL;
+        while (*p && *p != r) { prev = *p; p = &(*p)->next; }
+        if (*p) { *p = r->next; if (srv_tail == r) srv_tail = prev; }
+        ours = 1;
+    }
+    LeaveCriticalSection(&srv_cs);
+    if (ours) srv_free(r);
+    return done;
+}
+
+static void srv_reading_done(struct srv_conn *c)
+{
+    EnterCriticalSection(&srv_cs);
+    c->reading = 0;
+    LeaveCriticalSection(&srv_cs);
+}
+
+/* queue r. The connection threads run in any order, so requests that arrived together are put back in the
+ * order their connections were accepted (a connection that has sent nothing yet holds nobody up for long) */
+static void srv_queue(struct srv_conn *c, struct sreq *r)
+{
+    DWORD t0 = GetTickCount();
+    EnterCriticalSection(&srv_cs);
+    while (GetTickCount() - t0 < SRV_ORDER_MS)
+    {
+        int i;
+        for (i = 0; i < SRV_MAX_CONN; i++)
+            if (srv_slots[i].reading && (int)(srv_slots[i].seq - c->seq) < 0) break;
+        if (i == SRV_MAX_CONN) break;
+        LeaveCriticalSection(&srv_cs);
+        Sleep(1);
+        EnterCriticalSection(&srv_cs);
+    }
+    c->reading = 0;
+    if (srv_tail) srv_tail->next = r; else srv_head = r;
+    srv_tail = r;
+    LeaveCriticalSection(&srv_cs);
+    PostThreadMessageW(srv_main_tid, WM_NULL, 0, 0);     /* wake the message loop */
+}
+
+static void srv_connection(struct srv_conn *c)
+{
+    SOCKET s = c->s;
     char buf[4096], *line_end, *sp1, *sp2, *q, *auth;
     int len = 0, n;
     struct sreq *r;
-    DWORD tmo = 5000;
+    DWORD t0 = GetTickCount(), tmo;
 
-    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (char *)&tmo, sizeof(tmo));
-    while (len < (int)sizeof(buf) - 1 && (n = recv(s, buf + len, sizeof(buf) - 1 - len, 0)) > 0)
+    tmo = 5000;
+    setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, (char *)&tmo, sizeof(tmo));
+    for (;;)
     {
+        DWORD used = GetTickCount() - t0;
+        if (len >= (int)sizeof(buf) - 1 || used >= SRV_HEADER_MS) break;
+        tmo = SRV_HEADER_MS - used;                  /* a client trickling bytes still ends at the deadline */
+        setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (char *)&tmo, sizeof(tmo));
+        if ((n = recv(s, buf + len, sizeof(buf) - 1 - len, 0)) <= 0) break;
         len += n;
         buf[len] = 0;
         if (strstr(buf, "\r\n\r\n")) break;
@@ -98,58 +195,92 @@ static void srv_connection(SOCKET s)
     if (!auth || strncmp(auth + 24, srv_token, 64) || (auth[24 + 64] != '\r' && auth[24 + 64] != ' '))
     { srv_send(s, 401, "{\"error\":\"missing or wrong token\"}"); return; }
 
-    r = calloc(1, sizeof(*r));
+    if (!(r = calloc(1, sizeof(*r))) || !(r->done = CreateEventW(NULL, TRUE, FALSE, NULL)))
+    { free(r); srv_send(s, 503, "{\"error\":\"out of memory\"}"); return; }
     *sp1 = 0; *sp2 = 0;
     lstrcpynA(r->method, buf, sizeof(r->method));
     if ((q = strchr(sp1 + 1, '?'))) { *q = 0; lstrcpynA(r->query, q + 1, sizeof(r->query)); }
     lstrcpynA(r->path, sp1 + 1, sizeof(r->path));
-    r->status = 503;
-    strcpy(r->body, "{\"error\":\"timed out waiting for the player thread\"}");
-    r->done = CreateEventW(NULL, TRUE, FALSE, NULL);
 
-    EnterCriticalSection(&srv_cs);
-    if (srv_tail) srv_tail->next = r; else srv_head = r;
-    srv_tail = r;
-    LeaveCriticalSection(&srv_cs);
-    PostThreadMessageW(srv_main_tid, WM_NULL, 0, 0);     /* wake the message loop */
-
-    if (WaitForSingleObject(r->done, 60000) == WAIT_OBJECT_0)
+    srv_queue(c, r);
+    if (srv_wait(s, r))
     {
         srv_send(s, r->status, r->body);
-        CloseHandle(r->done);
-        free(r);
+        srv_free(r);
     }
-    else srv_send(s, 503, r->body);   /* the request stays queued and is freed by nobody: rare, small */
+    else srv_send(s, 503, "{\"error\":\"timed out waiting for the player thread\"}");   /* or the client is gone */
 }
 
+static DWORD WINAPI srv_conn_thread(void *arg)
+{
+    struct srv_conn *c = arg;
+    SOCKET s = c->s;
+    srv_connection(c);
+    srv_reading_done(c);           /* a request that was refused before it was queued */
+    shutdown(s, SD_SEND);
+    closesocket(s);
+    EnterCriticalSection(&srv_cs);
+    c->used = 0;
+    LeaveCriticalSection(&srv_cs);
+    InterlockedDecrement(&srv_conns);
+    return 0;
+}
+
+/* a free connection slot, or NULL */
+static struct srv_conn *srv_slot(void)
+{
+    struct srv_conn *c = NULL;
+    EnterCriticalSection(&srv_cs);
+    for (int i = 0; i < SRV_MAX_CONN && !c; i++) if (!srv_slots[i].used) c = &srv_slots[i];
+    LeaveCriticalSection(&srv_cs);
+    return c;
+}
+
+/* With all slots taken nothing is accepted: clients wait in the listen backlog (refusing one here
+ * would reset its connection, as its request has not been read, and lose a /quit, say) */
 static DWORD WINAPI srv_thread(void *arg)
 {
     SOCKET ls = (SOCKET)(ULONG_PTR)arg;
-    for (;;)
+    for (DWORD seq = 0;; seq++)
     {
-        SOCKET s = accept(ls, NULL, NULL);
-        if (s == INVALID_SOCKET) { Sleep(50); continue; }
-        srv_connection(s);
-        shutdown(s, SD_SEND);
-        closesocket(s);
+        HANDLE t; struct srv_conn *c; SOCKET s;
+        while (!(c = srv_slot())) Sleep(10);
+        if ((s = accept(ls, NULL, NULL)) == INVALID_SOCKET) { Sleep(50); continue; }
+        EnterCriticalSection(&srv_cs);
+        c->s = s; c->seq = seq; c->used = c->reading = 1;
+        LeaveCriticalSection(&srv_cs);
+        InterlockedIncrement(&srv_conns);
+        if ((t = CreateThread(NULL, 0, srv_conn_thread, c, 0, NULL))) CloseHandle(t);
+        else srv_conn_thread(c);           /* no thread to be had: served here, one at a time */
     }
     return 0;
 }
 
+/* The main thread runs the handler of one request at a time. While a /enqueue handler runs (and
+ * pumps, which calls this again) queued GET /status requests are answered too, one at a time and
+ * never from within another status; every other request keeps its place in the queue until the
+ * handler ends. During /play and the rest nothing is taken: /status must not show the previous
+ * track while a /play is changing it. */
 void server_process(void)
 {
-    if (srv_busy) return;            /* a handler is running and pumping messages itself */
     for (;;)
     {
-        struct sreq *r;
+        struct sreq *r; int nested = srv_busy;
+        if (nested && (!srv_status_ok || srv_nested)) return;
         EnterCriticalSection(&srv_cs);
-        if ((r = srv_head)) { srv_head = r->next; if (!srv_head) srv_tail = NULL; }
+        r = srv_take_locked(nested);
         LeaveCriticalSection(&srv_cs);
         if (!r) return;
-        srv_busy = 1;
+        if (nested) srv_nested = 1;
+        else { srv_busy = 1; srv_status_ok = !strcmp(r->method, "POST") && !strcmp(r->path, "/enqueue"); }
         srv_handler(r);
-        srv_busy = 0;
+        if (nested) srv_nested = 0;
+        else { srv_busy = 0; srv_status_ok = 0; }
+        EnterCriticalSection(&srv_cs);
+        if (r->abandoned) { LeaveCriticalSection(&srv_cs); srv_free(r); continue; }   /* nobody is waiting any more */
+        r->finished = 1;
         SetEvent(r->done);
+        LeaveCriticalSection(&srv_cs);
     }
 }
 
@@ -182,7 +313,7 @@ int server_start(int port, server_handler handler, WCHAR *token_path, size_t tok
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
     addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);        /* loopback only */
-    if (bind(ls, (struct sockaddr *)&addr, sizeof(addr)) || listen(ls, 8)) { closesocket(ls); return 0; }
+    if (bind(ls, (struct sockaddr *)&addr, sizeof(addr)) || listen(ls, 16)) { closesocket(ls); return 0; }
     srv_main_tid = GetCurrentThreadId();
     srv_handler = handler;
     CloseHandle(CreateThread(NULL, 0, srv_thread, (void *)(ULONG_PTR)ls, 0, NULL));

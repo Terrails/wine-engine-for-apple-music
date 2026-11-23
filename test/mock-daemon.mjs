@@ -6,7 +6,8 @@
 //              an unrelated track follows the end of the queue), MOCK_NO_SEAMLESS=1 (an older
 //              service: no /crossfade, /enqueue, /dequeue, /autoplay and none of their status fields;
 //              POST /mock/seamless?on=0|1 switches at run time).
-// Like the service it handles one request at a time (a /play or /enqueue holds up /status), reports
+// Like the service it handles one request at a time (a /play holds up /status), except that a
+// /status is answered while an /enqueue runs; it reports
 // positionMs in steps of about a second, and ignores crossfade: the setting is kept, but the next
 // item starts at the end of the current one, as the engine does under Wine (docs/api.md).
 import http from 'http';
@@ -119,7 +120,15 @@ async function handle(req, res) {
   }
   send(200, { ok: true, hresult: '00000000' });
 }
-// one request at a time, like the service's single dispatch thread
-let line = Promise.resolve();
-http.createServer((req, res) => { line = line.then(() => handle(req, res)).catch((e) => log('!!', e)); })
-  .listen(PORT, '127.0.0.1', () => log('mock on', PORT));
+// one request at a time, like the service's single dispatch thread; but a GET /status that arrives
+// while an /enqueue runs is answered at once (the service does that from the enqueue's message pump).
+// During /play and every other request it waits its turn.
+let line = Promise.resolve(), running = null;
+http.createServer((req, res) => {
+  const path = req.url.split('?')[0];
+  if (path === '/status' && req.method === 'GET' && running === '/enqueue') {
+    handle(req, res).catch((e) => log('!!', e));
+    return;
+  }
+  line = line.then(async () => { running = path; try { await handle(req, res); } finally { running = null; } }).catch((e) => log('!!', e));
+}).listen(PORT, '127.0.0.1', () => log('mock on', PORT));

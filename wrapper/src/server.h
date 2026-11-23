@@ -1,10 +1,11 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later */
 /* Local control API server: HTTP/1.1 + JSON on 127.0.0.1 (endpoints: api.c).
  *
- * A socket thread accepts one request at a time and hands it to the main (UI) thread, which
- * is the only thread allowed to talk to AMP.Services; server_process() runs there, from the
- * message loop. Every request must carry "Authorization: Bearer <token>"; the token is random
- * per start and written to %LOCALAPPDATA%\AppleMusicWrapper\token (so only local programs
+ * A socket thread accepts connections (one short-lived thread each, at most 16) and queues
+ * their requests for the main (UI) thread, which is the only thread allowed to talk to
+ * AMP.Services; server_process() runs there, from the message loop, one request at a time in
+ * order. The one exception: GET /status is answered while a /enqueue runs (server.c).
+ * Every request must carry "Authorization: Bearer <token>"; the token is random per start and written to %LOCALAPPDATA%\AppleMusicWrapper\token (so only local programs
  * that can read the user's files get in, and web pages cannot drive it cross-site: there are
  * no CORS headers and the custom header forces a preflight that is refused).
  *
@@ -31,6 +32,7 @@ struct sreq
     char body[8192];        /* response JSON */
     int status;
     HANDLE done;
+    int taken, finished, abandoned;   /* hand-over between the socket thread and the main thread, under srv_cs */
 };
 
 /* runs on the main thread, fills r->status and r->body */

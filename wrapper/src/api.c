@@ -205,6 +205,12 @@ static void api_dequeue(struct sreq *r)
         int m = queue_upcoming(up, ARRAY_SIZE(up), 0);
         for (int i = 0; i < m; i++) if (up[i].id != cur) ids[n++] = up[i].id;
     }
+    /* the list was read after the current item; look again right before deleting, as the agent can
+     * move on to the next item between the two (nothing here pumps, but its calls can dispatch) */
+    player_status(&st);
+    cur = st.has_item ? st.queue_item_id : 0;
+    player_status_free(&st);
+    for (int i = 0; i < n; i++) if (ids[i] == cur) ids[i--] = ids[--n];
     hr = queue_delete(ids, n);
     pump(100);
     LOG("API dequeue id=%s: %d item(s) -> %08lx", id[0] ? id : "(all upcoming)", n, hr);
@@ -217,15 +223,34 @@ static const struct { const char *path; int slot; } simple_cmds[] = {
     { "/resume", 12 }, { "/pause", 13 }, { "/stop", 14 }, { "/previous", 16 }, { "/next", 17 },
 };
 
+/* Answer a player command once AMP.Services has run it (a few ms, on its own threads; 0.5 s at most):
+ * commands in flight together reach the agent in any order, so the next request must not start before
+ * (of several /volume queued behind an /enqueue the last one did not always win). */
+static void api_command(struct sreq *r, HRESULT hr, void *act)
+{
+    HRESULT err;
+    api_result(r, hr);
+    if (FAILED(hr) || !act) return;
+    await_async(act, 5, 100, &err);
+    IUnknown_Release((IUnknown *)act);
+}
+
 void api_handle(struct sreq *r)
 {
-    void *player = get_player(), *act = NULL; char v[32];
+    void *player = get_player(), *act = NULL; char v[32]; HRESULT hr;
     if (!strcmp(r->path, "/status") && !strcmp(r->method, "GET")) { api_status(r); return; }
     if (strcmp(r->method, "POST")) { reply(r, 405, "{\"error\":\"use POST (GET only for /status)\"}"); return; }
     if (!strcmp(r->path, "/quit")) { api_quit_requested = 1; reply(r, 200, "{\"ok\":true}"); return; }
+    /* requests queued behind a /quit must not start anything: the engine is being stopped */
+    if (api_quit_requested) { reply(r, 503, "{\"error\":\"the service is quitting\"}"); return; }
     if (!player) { reply(r, 503, "{\"error\":\"player not ready\"}"); return; }
     for (int i = 0; i < (int)ARRAY_SIZE(simple_cmds); i++)
-        if (!strcmp(r->path, simple_cmds[i].path)) { api_result(r, CALL1(player, simple_cmds[i].slot, &act)); return; }
+        if (!strcmp(r->path, simple_cmds[i].path))
+        {
+            hr = CALL1(player, simple_cmds[i].slot, &act);
+            api_command(r, hr, act);
+            return;
+        }
     if (!strcmp(r->path, "/play")) api_play(r);
     else if (!strcmp(r->path, "/quality")) api_quality(r);
     else if (!strcmp(r->path, "/crossfade")) api_crossfade(r);
@@ -235,14 +260,16 @@ void api_handle(struct sreq *r)
     else if (!strcmp(r->path, "/seek"))
     {
         INT64 ticks = _atoi64(srv_param(r, "ms", v, sizeof(v))) * 10000;     /* TimeSpan: 100 ns units */
-        api_result(r, ((HRESULT (WINAPI *)(void *, INT64, boolean, void **))VT(player)[22])(player, ticks, FALSE, &act));
+        hr = ((HRESULT (WINAPI *)(void *, INT64, boolean, void **))VT(player)[22])(player, ticks, FALSE, &act);
+        api_command(r, hr, act);
     }
     else if (!strcmp(r->path, "/volume"))
     {
         double vol = atof(srv_param(r, "v", v, sizeof(v)));
         if (vol < 0) vol = 0;
         if (vol > 1) vol = 1;
-        api_result(r, ((HRESULT (WINAPI *)(void *, double, void **))VT(player)[27])(player, vol, &act));
+        hr = ((HRESULT (WINAPI *)(void *, double, void **))VT(player)[27])(player, vol, &act);
+        api_command(r, hr, act);
     }
     else reply(r, 404, "{\"error\":\"unknown endpoint\"}");
 }

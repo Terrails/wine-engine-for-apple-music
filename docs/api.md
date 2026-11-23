@@ -17,8 +17,7 @@ develop against without Wine.
   `Cache-Control: no-store` and `Content-Type: application/json; charset=utf-8`.
 - Parameters are passed in the **query string**; request bodies are ignored. Values are not
   URL-decoded, which is fine for the IDs, numbers and codes the API takes.
-- The request line and headers must fit in 4 KB and arrive with no more than 5 s between two
-  packets (a per-read timeout, not a total deadline).
+- The request line and headers must fit in 4 KB and arrive within 5 s in all.
 
 ## Authentication
 
@@ -88,6 +87,8 @@ Details:
   `/status` to see the result.
 - **`/seek`**: `ms` is the position in milliseconds from the start of the track. A missing
   value seeks to 0.
+- `/resume`, `/pause`, `/stop`, `/previous`, `/next`, `/seek` and `/volume` answer once the app has run the
+  command, after 0.5 s at the latest (measured 6-113 ms), so commands sent one after the other keep their order.
 - **`/volume`**: `v` is clamped to 0..1. A missing value sets 0.
 - **`/quality`**: the streaming quality setting. It applies to tracks started afterwards and
   survives restarts (the agent keeps it in its own preferences). `quality` in the response is
@@ -95,7 +96,7 @@ Details:
 - **`/crossfade`**: the app's crossfade setting (`IPlaybackSettings` CrossfadeSongs and
   CrossfadeValue; the value is in seconds, the app's default is 6). `s` is optional and keeps
   the current length when missing. The response reads the setting back. It survives restarts
-  like the quality. **Under Wine it has no audible effect**: see "Queue and seamless playback".
+  like the quality. Only some transitions are crossfaded: see "Queue and seamless playback".
 - **`/enqueue`**: "Play Next" of a catalogue song: it is added right after the current item
   (section `next-added`) and what plays is not interrupted. `song`, `album` and `storefront`
   are as for `/play`. `queueItemId` is the new item's ID in the queue (as in `upNext` and
@@ -132,6 +133,7 @@ Details:
 | 409 | `{"ok":false,"error":"nothing playing"}` | `/enqueue` with no current item |
 | 500 | `{"ok":false,"hresult":"8000ffff"}` (plus the fields of the success response) | the engine returned a failure HRESULT (`/enqueue`: `80004001` when the song's context menu has no Play Next) |
 | 503 | `{"error":"player not ready"}` | any POST except `/quit` before the engine has a player |
+| 503 | `{"error":"the service is quitting"}` | a POST that was waiting when `/quit` ran |
 | 503 | `{"error":"timed out waiting for the player thread"}` | the request was not handled within 60 s |
 
 ## Status
@@ -234,8 +236,8 @@ If the agent dies, the service exits (code 4) and a UI that started it should st
 - **`/enqueue` takes about 0.7-1.4 s** (the album page loads, then the queue shows the item
   about 0.5 s after Play Next). The worst case is about 20 s (up to 10 s for the page, up to
   5 s for the context menu, up to 5 s for the item to reach the queue); a song that is not on
-  the page answers 404 after about 13 s. Like every request it blocks the others: `/status`
-  waits meanwhile, so allow more than 20 s for it. Send it well before the current track ends
+  the page answers 404 after about 11-13 s. Like every request it holds up the others, except `/status`,
+  which is answered meanwhile; allow more than 20 s for the `/enqueue` itself. Send it well before the current track ends
   (20-30 s ahead).
 - A UI that advances its own queue with one `/play` per item has a gap of the deep-link load
   time between tracks. With `/enqueue` the engine continues by itself (next section).
@@ -251,27 +253,36 @@ current one plays and then follows `nowPlaying` instead of sending `/play`.
   when the previous item has ended (measured: within about 0.1 s of the first sound of the new
   item, polling every 100 ms). `upNext` follows a moment later; the current item is not listed
   in it meanwhile.
-- **Gapless**: consecutive tracks of an album in the same format play from the same audio
-  stream without a break (Pink Floyd, The Dark Side of the Moon, "Brain Damage" into
-  "Eclipse": no digital silence of 5 ms or more at the transition).
-- Between tracks of different albums (an enqueued song, autoplay) the engine closes the
-  track's audio stream and opens a new one: measured 0.66-0.91 s of digital silence from the
-  last sound of one track to the first of the next, which includes the first track's own
-  fade-out tail (Daft Punk, "Harder Better Faster Stronger", into three different songs) and
-  about 0.2 s with no stream at all.
-- **Crossfade does not happen under Wine.** The setting is stored, read back and kept across
-  restarts, but with it on (6 s and 12 s; album order, Play Next items and autoplay, six
-  transitions) the outgoing track kept its level up to its own end, the next one started
-  only after it, and there was never more than one stream: the same as with crossfade off.
-  `songId` therefore switches at the end of the track either way.
+- **Gapless**: tracks of the same audio format play from the same audio stream without a break, in
+  an album (Pink Floyd, "Brain Damage" into "Eclipse": no digital silence of 5 ms or more) and
+  across albums (Nirvana, "Territorial Pissings", into Daft Punk, "Get Lucky", both 24-bit ALAC at
+  44.1 kHz: 13 ms). With the `aac` quality the four pairs of different albums tried all shared one stream.
+- Between lossless tracks of different formats (seen: 44.1 and 48 kHz, and 16 and 24 bit) the engine
+  closes the track's audio stream and opens a new one: measured 0.16-0.9 s of digital silence, what
+  the songs themselves have included.
+- **Crossfade** happens only with the `aac` quality, when the next item is a catalogue item (not
+  autoplay; by the agent's code also not the next track of the same album) that was queued **before
+  the current track started**: the agent decides then, and an `/enqueue` during the track comes too late
+  for that track's end. Measured, one transition each: the next track started (`songId` switched) 6 s
+  before the other's end with 8 s set and 8 s before with 12 s, in one stream and without a
+  silence. To have the item after next queued in time, enqueue it first and the next one after it (the order
+  is last in, first out); appending to the end of `next-added` is not possible yet. With `lossless`
+  (measured) and `hires` (same player) the engine does not crossfade
+  ([KNOWN_ISSUES.md](../KNOWN_ISSUES.md)).
 
 ## Concurrency
 
-The engine may only be called from its UI thread. A socket thread accepts **one connection at a
-time** and hands the request to the main thread, which runs it from its message loop. So
-requests are strictly serialised: while a `/play` or `/enqueue` is running, a `/status` from
-another client waits until it is done (connections queue in the listen backlog). Keep requests short, do not
-hold connections open, and do not poll from several timers in one client.
+The engine may only be called from its UI thread. Connections are accepted concurrently (one
+short-lived thread each, at most 16 at once, more wait in the listen backlog; a request head that does
+not arrive within 5 s is dropped), but the requests are handed to the main thread, which runs them
+**one at a time, in arrival order**. While a `/play` or any other request runs, a `/status` from
+another client waits until it is done. The exception is **`/enqueue`**: while one runs, queued
+`GET /status` requests are answered (one at a time, from the enqueue's own message pump) and
+everything else keeps its place until the `/enqueue` ends. `/status` is deliberately not answered
+during `/play`: it must not show the previous track while a play changes it. A request that waits
+more than 60 s gets a 503 (it no longer runs if it had not started); one whose client has gone away still runs. Once a
+`/quit` has been handled, other POSTs get a 503. Keep requests short and
+do not poll from several timers in one client.
 
 There is one player. Several clients may read `/status`, but only one should control playback
 (see [architecture.md](architecture.md), "One player at a time").
@@ -287,8 +298,8 @@ curl -s -H 'Authorization: Bearer mocktoken' http://127.0.0.1:7699/status
 ```
 
 - The token is always **`mocktoken`**.
-- Like the service it handles **one request at a time**: a `/status` sent while a `/play` or
-  `/enqueue` runs waits for it.
+- Like the service it handles **one request at a time**: a `/status` sent while a `/play` runs
+  waits for it, but one sent while an `/enqueue` runs is answered at once.
 - `/play` waits 0.9 s, looks the song up in the public iTunes Search API (network access
   needed; `storefront` default `AM_STOREFRONT`, else `us`) and starts it 0.4 s later. A song the
   lookup does not know gives the 404 of the real service (at once, not after about 10 s).
@@ -300,7 +311,7 @@ curl -s -H 'Authorization: Bearer mocktoken' http://127.0.0.1:7699/status
   before earlier ones.
 - `/dequeue`, `/crossfade` and `/autoplay` take and check the parameters of the service and
   answer with the same fields and errors (`removed` counts the items asked for). The crossfade
-  setting is kept and reported but, as with the engine under Wine, has **no effect**: the next
+  setting is kept and reported but, as with lossless on the engine, has **no effect**: the next
   item starts at the end of the current one, and `nowPlaying.songId` switches then.
 - `nowPlaying.positionMs` advances in steps of a second after a play, seek or resume, as the
   engine's does, and stops at `durationMs`. At the end the next queued item starts at once

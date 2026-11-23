@@ -27,12 +27,19 @@ First public release. Supports Apple Music for Windows 1.1792.39941.0 (x64).
 - Seamless playback through the engine's own queue: `POST /enqueue` (Play Next of a catalogue
   song without interrupting playback), `POST /dequeue`, `POST /autoplay`, and `upNext`,
   `autoplay` and `nowPlaying.queueItemId` in the status. Album tracks in the same format play
-  gapless; tracks of different albums follow with under a second of silence.
-- `POST /crossfade` and `crossfade` in the status: the app's crossfade setting (seconds). It is
-  kept, but the engine does not crossfade under Wine (KNOWN_ISSUES.md).
+  gapless; tracks of different formats follow with under a second of silence.
+- `POST /crossfade` and `crossfade` in the status: the app's crossfade setting (seconds). The
+  engine acts on it only with AAC and a next item queued early (KNOWN_ISSUES.md).
 - `bin/amctl enqueue`, `dequeue`, `crossfade`, `autoplay`.
+- `GET /status` is answered while an `/enqueue` runs; connections are accepted concurrently (at
+  most 16 at once, slow or silent clients time out) and requests still run one at a time on the engine's
+  thread. A request that timed out no longer leaks, and requests queued
+  behind a `/quit` no longer run.
+- Player commands (`/pause`, `/seek`, `/volume`, ...) answer once the app has run them, so that commands
+  sent close together keep their order.
+- `/dequeue` checks the current item again right before deleting.
 - The mock service has the new endpoints and status fields, handles one request at a time like
-  the service, and can act as an older service (`MOCK_NO_SEAMLESS=1`, `POST /mock/seamless`).
+  the service (`/status` is answered during `/enqueue`), and can act as an older service (`MOCK_NO_SEAMLESS=1`, `POST /mock/seamless`).
 - The audio stream is named "Apple Music" with `<artist> - <title>` as its stream name in
   PulseAudio/PipeWire mixers (`libampulse.so`).
 - `PULSE_LATENCY_MSEC=100` by default against clicks under CPU load.

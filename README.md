@@ -56,8 +56,8 @@ Working:
   whether pushes are delivered has not been verified).
 - Repeated fast track switching without crashes or leaked audio streams.
 
-Not working or not there yet: video, crossfade (the setting is kept but has no audible effect
-under Wine), push events in the API, reordering the queue, shuffle/repeat, lyrics and library
+Not working or not there yet: video, crossfade with lossless (AAC only, and only
+for items queued early), push events in the API, reordering the queue, shuffle/repeat, lyrics and library
 browsing through the API, playing a song inside a playlist's or search result's context. See
 [KNOWN_ISSUES.md](KNOWN_ISSUES.md).
 
