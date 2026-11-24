@@ -45,7 +45,8 @@ Working:
   resume, stop, next, previous, seek, volume.
 - Gapless transitions inside the engine's queue: the next item starts when the current one
   ends, without a new `/play` (continuous albums play without a dropout). "Play Next" of any
-  catalogue song without interrupting playback (`/enqueue`), removing queued items, the
+  catalogue song without interrupting playback (`/enqueue`), "Add to Queue"
+  (`/enqueue` with `at=end`), removing queued items, the
   autoplay switch, and the next items in the status.
 - Now-playing status: title, artist, album, genre, release date, catalogue song ID, position,
   duration, what is being decoded (format, sample rate, bit depth), and a flag when the engine

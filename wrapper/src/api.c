@@ -153,10 +153,10 @@ static void api_autoplay(struct sreq *r)
              SUCCEEDED(hr) ? "true" : "false", hr, queue_autoplay() ? "true" : "false");
 }
 
-/* POST /enqueue?song=<id>&album=<id>[&storefront=<cc>]: Play Next */
+/* POST /enqueue?song=<id>&album=<id>[&storefront=<cc>][&at=next|end]: Play Next (default) or Add to Queue */
 static void api_enqueue(struct sreq *r)
 {
-    char song[32], album[32], cc[8];
+    char song[32], album[32], cc[8], at[8];
     struct play_request req; struct play_result res; struct player_status st; int playing;
 
     srv_param(r, "song", song, sizeof(song)); srv_param(r, "album", album, sizeof(album));
@@ -165,13 +165,16 @@ static void api_enqueue(struct sreq *r)
     if (!all_lower(cc)) strcpy(cc, "us");
     if (!album[0] || !song[0] || !all_digits(album) || !all_digits(song) || !g_main_vm)
     { reply(r, 400, "{\"ok\":false,\"error\":\"need song=<id>&album=<id>, numeric\"}"); return; }
+    srv_param(r, "at", at, sizeof(at));
+    if (at[0] && strcmp(at, "next") && strcmp(at, "end"))
+    { reply(r, 400, "{\"ok\":false,\"error\":\"at must be next or end\"}"); return; }
     player_status(&st);
     playing = st.has_item && st.queue_item_id;
     player_status_free(&st);
     if (!playing) { reply(r, 409, "{\"ok\":false,\"error\":\"nothing playing\"}"); return; }
 
     req.cc = cc; req.album = album; req.song = song; req.single = 0;
-    play_enqueue(&req, &res);
+    play_enqueue(&req, &res, !strcmp(at, "end"));
     if (!res.found && SUCCEEDED(res.hr))
     {
         r->status = 404;

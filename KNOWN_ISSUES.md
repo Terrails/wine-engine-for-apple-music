@@ -21,9 +21,9 @@ sounding after the last item.
 ### No push events, full queue, shuffle/repeat, lyrics or library in the API
 
 The API offers playback control, a status snapshot and a little of the queue: the next five
-items, Play Next (`/enqueue`), removing items and the autoplay switch. There are no events
-(clients poll `GET /status`), no view of the whole queue, no reordering and no "add to the end"
-(Add to Queue), no shuffle or repeat mode, no lyrics, and no access to the library or playlists.
+items, Play Next and Add to Queue (`/enqueue`), removing items and the autoplay switch. There are no
+events (clients poll `GET /status`), no view of the whole queue, no reordering, no shuffle or repeat
+mode, no lyrics, and no access to the library or playlists.
 The app has interfaces for these; they are not wired up. The app's own search is not used
 either.
 
@@ -60,9 +60,8 @@ each), the level faded without a silence and there was one audio stream. That th
 follows from this and was not checked by ear. No failure in Wine was found; real Windows was not
 compared.
 
-**Workaround:** with `aac`, queue the item after next along with the next one. As a later Play Next item
-goes before an earlier one, enqueue the item after next first. An "add to the end of the queue"
-endpoint, needed to keep this up, does not exist yet.
+**Workaround:** with `aac`, stay two items ahead with `/enqueue?...&at=end` (Add to Queue, behind the earlier
+items). Two items queued so switched early (about 6.9 s and 5.6 s with 8 s set).
 
 ### Memory still grows a little with every album page (`/play`, `/enqueue`)
 
@@ -90,17 +89,18 @@ second navigation, 3.5 s or more).
 **Workaround:** use `/enqueue` for the next track instead of `/play` (see
 [docs/api.md](docs/api.md), "Queue and seamless playback").
 
-### "Play Next" goes through the song's context menu
+### "Play Next" and "Add to Queue" go through the song's context menu
 
 There is no direct call for queueing a catalogue song, so `/enqueue` opens the album page, builds
-the track's context menu the way the app's UI does and runs its "Play Next" item. The menu items
-carry no IDs; the item is found by its title "Play Next", or, in another UI language, as the item
-after the one naming the track. Building the menu needs a clipboard check that Wine cannot
-answer; the service redirects it (nothing is ever on the clipboard). A later app version may
-change the menu.
+the track's context menu the way the app's UI does and runs its "Play Next" item (`at=end`: its
+"Add to Queue" item). The menu items carry no IDs; the item is found by its title "Play Next", or, in
+another UI language, as the item after the one naming the track. `at=end` has no such fallback: it needs the English title, else 500
+`80004001`, because the item in its place would be Create Station. Building the menu needs a
+clipboard check that Wine cannot answer; the service redirects it (nothing is ever on the
+clipboard). A later app version may change the menu.
 
 **Workaround:** none needed with the supported version; a 500 with `hresult` `80004001` means
-the menu had no Play Next.
+the menu had no Play Next (or no Add to Queue).
 
 ### `/enqueue` holds up the other requests (but not `/status`)
 

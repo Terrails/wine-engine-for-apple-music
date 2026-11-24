@@ -25,6 +25,7 @@ struct play_result
 };
 
 void play_catalog(const struct play_request *req, struct play_result *res);
-/* "Play Next": add the catalogue song req->song (on album req->album) after the current item,
- * without touching what plays */
-void play_enqueue(const struct play_request *req, struct play_result *res);
+/* Add the catalogue song req->song (on album req->album) to the queue through the app's context
+ * menu, without touching what plays. at_end 0 = its "Play Next" (right after the current item, last
+ * in first out). at_end 1 = its "Add to Queue" (the end of the queued songs). */
+void play_enqueue(const struct play_request *req, struct play_result *res, int at_end);

@@ -60,7 +60,7 @@ main process) and never hand the token to the page.
 | `POST /volume` | `v=<0..1>` | same |
 | `POST /quality` | `q=aac\|lossless\|hires` | `{"ok":true,"hresult":"00000000","quality":"lossless"}` |
 | `POST /crossfade` | `on=0\|1` (required), `s=<seconds 1..12>` | `{"ok":true,"hresult":"00000000","crossfade":{"on":true,"seconds":6}}` |
-| `POST /enqueue` | `song=<id>`, `album=<id>` (both required), `storefront=<cc>` | `{"ok":true,"hresult":"00000000","queueItemId":"3099","loadMs":1163}` |
+| `POST /enqueue` | `song=<id>`, `album=<id>` (both required), `storefront=<cc>`, `at=next\|end` | `{"ok":true,"hresult":"00000000","queueItemId":"3099","loadMs":1163}` |
 | `POST /dequeue` | `id=<queueItemId>` | `{"ok":true,"hresult":"00000000","removed":1}` |
 | `POST /autoplay` | `on=0\|1` | `{"ok":true,"hresult":"00000000","autoplay":false}` |
 | `POST /quit` | none | `{"ok":true}`, then the service exits |
@@ -97,13 +97,21 @@ Details:
   CrossfadeValue; the value is in seconds, the app's default is 6). `s` is optional and keeps
   the current length when missing. The response reads the setting back. It survives restarts
   like the quality. Only some transitions are crossfaded: see "Queue and seamless playback".
-- **`/enqueue`**: "Play Next" of a catalogue song: it is added right after the current item
-  (section `next-added`) and what plays is not interrupted. `song`, `album` and `storefront`
+- **`/enqueue`**: "Play Next" (or, with `at=end`, "Add to Queue") of a catalogue song: by default it is added
+  right after the current item (section `next-added`) and what plays is not interrupted. `song`, `album` and `storefront`
   are as for `/play`. `queueItemId` is the new item's ID in the queue (as in `upNext` and
   `nowPlaying.queueItemId`), or `""` if it did not show up in the queue within 5 s. Like the
   app's own Play Next, a later `/enqueue` goes **before** the earlier ones: to queue several
-  songs in order, enqueue the next one only. Needs something playing or paused (409 otherwise).
+  songs in order, use `at=end`. Needs something playing or paused (409 otherwise).
   A `/play` replaces the queue and drops the enqueued items.
+  - `at=end` (default `at=next`) runs the app's "Add to Queue": the song goes
+    to the end of `next-added`, behind earlier items (measured after `queue=single`), so a UI can stay
+    two items ahead and have AAC items crossfaded (see "Queue and seamless playback"). Its order
+    against the rest of a `/play`'ed album is not measured.
+  - `at=end` needs the English menu title "Add to Queue", otherwise 500 `80004001`: unlike Play Next
+    it has no fallback for other UI languages, as the item in its place would be Create Station.
+  - `upNext` shows only 5 items, so follow the item by `queueItemId`. With `""` the song may still
+    have been added, so do not resend blindly.
 - **`/dequeue`**: with `id`, removes that queue item; without, every item after the current
   one in the `next-added` and `next` sections (not autoplay, not history). `removed` is the
   number of items asked to be removed. It does not touch what plays: the current item is never
@@ -124,6 +132,7 @@ Details:
 | 400 | `{"ok":false,"error":"need q=aac\|lossless\|hires"}` | `/quality` with another value, or before the playback settings exist |
 | 400 | `{"ok":false,"error":"need on=0\|1 and optionally s=<seconds 1..12>"}` | `/crossfade` with another value, or before the playback settings exist |
 | 400 | `{"ok":false,"error":"need song=<id>&album=<id>, numeric"}` | `/enqueue` without both IDs, or before the main page has loaded |
+| 400 | `{"ok":false,"error":"at must be next or end"}` | `/enqueue` with another `at` |
 | 400 | `{"ok":false,"error":"id must be a numeric queueItemId"}` | `/dequeue` |
 | 400 | `{"ok":false,"error":"need on=0\|1"}` | `/autoplay` |
 | 401 | `{"error":"missing or wrong token"}` | see "Authentication" |
@@ -131,7 +140,7 @@ Details:
 | 404 | `{"error":"unknown endpoint"}` | any other path (a POST, once the player is ready; a GET gets 405, a POST before then 503) |
 | 405 | `{"error":"use POST (GET only for /status)"}` | a method other than POST (except `GET /status`) |
 | 409 | `{"ok":false,"error":"nothing playing"}` | `/enqueue` with no current item |
-| 500 | `{"ok":false,"hresult":"8000ffff"}` (plus the fields of the success response) | the engine returned a failure HRESULT (`/enqueue`: `80004001` when the song's context menu has no Play Next) |
+| 500 | `{"ok":false,"hresult":"8000ffff"}` (plus the fields of the success response) | the engine returned a failure HRESULT (`/enqueue`: `80004001` when the song's context menu has no Play Next, or no Add to Queue) |
 | 503 | `{"error":"player not ready"}` | any POST except `/quit` before the engine has a player |
 | 503 | `{"error":"the service is quitting"}` | a POST that was waiting when `/quit` ran |
 | 503 | `{"error":"timed out waiting for the player thread"}` | the request was not handled within 60 s |
@@ -184,7 +193,7 @@ Details:
 | `nowPlaying` | object or `null` | the current item; `null` when nothing is loaded, while the item is a placeholder, or while it has no title yet (the first moments of loading) |
 | `crossfade` | object | the crossfade **setting**: `on` (boolean), `seconds` (integer); `{"on":false,"seconds":0}` before the settings exist |
 | `autoplay` | boolean | the engine's autoplay is on (`PlayQueue.AutoPlayActive`) |
-| `upNext` | array | the next items after the current one in play order, at most 5: `songId` (catalogue ID, `""` for an item the engine is still resolving), `queueItemId`, `section` (`next-added`: Play Next items, `next`: the rest of the album, `autoplay`). `[]` when nothing is playing or nothing follows |
+| `upNext` | array | the next items after the current one in play order, at most 5: `songId` (catalogue ID, `""` for an item the engine is still resolving), `queueItemId`, `section` (`next-added`: Play Next and Add to Queue items, `next`: the rest of the album, `autoplay`). `[]` when nothing is playing or nothing follows |
 | `agentHung` | boolean | an agent call has not returned within 5 s (playback and library calls are stuck) |
 | `agentPhase` | string or `null` | while hung: the call that is stuck, e.g. `MediaAppExecAgentCommandAsync(5045)`; `null` otherwise |
 
@@ -238,13 +247,13 @@ If the agent dies, the service exits (code 4) and a UI that started it should st
   5 s for the context menu, up to 5 s for the item to reach the queue); a song that is not on
   the page answers 404 after about 11-13 s. Like every request it holds up the others, except `/status`,
   which is answered meanwhile; allow more than 20 s for the `/enqueue` itself. Send it well before the current track ends
-  (20-30 s ahead).
+  (20-30 s ahead). `at=end` takes as long (0.9-1.6 s, eight calls).
 - A UI that advances its own queue with one `/play` per item has a gap of the deep-link load
   time between tracks. With `/enqueue` the engine continues by itself (next section).
 
 ## Queue and seamless playback
 
-The engine plays its own queue: history, the current item, `next-added` (Play Next), `next`
+The engine plays its own queue: history, the current item, `next-added` (Play Next, Add to Queue), `next`
 (the rest of the album) and `autoplay`. When an item ends, the engine starts the next one by
 itself; a UI that wants seamless transitions enqueues its next track with `/enqueue` while the
 current one plays and then follows `nowPlaying` instead of sending `/play`.
@@ -265,8 +274,10 @@ current one plays and then follows `nowPlaying` instead of sending `/play`.
   the current track started**: the agent decides then, and an `/enqueue` during the track comes too late
   for that track's end. Measured, one transition each: the next track started (`songId` switched) 6 s
   before the other's end with 8 s set and 8 s before with 12 s, in one stream and without a
-  silence. To have the item after next queued in time, enqueue it first and the next one after it (the order
-  is last in, first out); appending to the end of `next-added` is not possible yet. With `lossless`
+  silence. To have the item after next queued in time, stay two items ahead with `at=end`:
+  items added so before the current one started switched about 6.9 s and 5.6 s early (8 s set, one
+  transition each, by the last reported position); one added while the current track played switched
+  about 1 s before the end. With `lossless`
   (measured) and `hires` (same player) the engine does not crossfade
   ([KNOWN_ISSUES.md](../KNOWN_ISSUES.md)).
 
@@ -308,7 +319,7 @@ curl -s -H 'Authorization: Bearer mocktoken' http://127.0.0.1:7699/status
 - `/enqueue` checks its parameters like the service (400, 409 `nothing playing`), then takes
   about 0.75 s plus the lookup (0.4 s for the page, 0.35 s until the item is in the queue) and
   answers with a numeric `queueItemId`. The new item goes first in `upNext` (`next-added`),
-  before earlier ones.
+  before earlier ones. With `at=end` it goes last.
 - `/dequeue`, `/crossfade` and `/autoplay` take and check the parameters of the service and
   answer with the same fields and errors (`removed` counts the items asked for). The crossfade
   setting is kept and reported but, as with lossless on the engine, has **no effect**: the next

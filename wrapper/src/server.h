@@ -17,7 +17,7 @@
  *   POST /volume?v=<0..1>
  *   POST /quality?q=aac|lossless|hires
  *   POST /crossfade?on=0|1[&s=<seconds>]       POST /autoplay?on=0|1
- *   POST /enqueue?song=<id>&album=<id>[&storefront=<cc>]   Play Next
+ *   POST /enqueue?song=<id>&album=<id>[&storefront=<cc>][&at=next|end]   Play Next / Add to Queue
  *   POST /dequeue[?id=<queueItemId>]
  *   POST /quit                                shut the wrapper down
  */

@@ -32,7 +32,7 @@ void *g_sp, *g_main_vm;
 
 /* AMP::Utils::ClipboardContainsContentDescriptors() asks WinRT's Clipboard, which Wine does not
  * have (class not registered), and that failure aborts building an item's context menu (the
- * menu /enqueue uses for "Play Next"). Nothing is ever on the clipboard here. */
+ * menu /enqueue uses). Nothing is ever on the clipboard here. */
 static unsigned char no_clipboard_content(void) { return 0; }
 
 void pump(DWORD ms)

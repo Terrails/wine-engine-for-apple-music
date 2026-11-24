@@ -77,14 +77,16 @@ async function handle(req, res) {
       } catch (e) { return send(500, { ok: false, error: String(e) }); }
     }
     case '/enqueue': {   // Play Next: right after the current item, before earlier ones; what plays goes on
+                         // (at=end: Add to Queue, behind the earlier ones)
       if (!digits(q.song) || !digits(q.album)) return send(400, { ok: false, error: 'need song=<id>&album=<id>, numeric' });
+      if (q.at && !['next', 'end'].includes(q.at)) return send(400, { ok: false, error: 'at must be next or end' });
       if (!cur) return send(409, { ok: false, error: 'nothing playing' });
       await sleep(400);   // the album page
       try {
         const t = await lookup(q);
         if (!t) return send(404, NOT_FOUND(400));
         await sleep(350); // Play Next until the item shows in the queue
-        upNext.unshift(t);
+        if (q.at === 'end') upNext.push(t); else upNext.unshift(t);
         log('enqueued', t.title, t.qid);
         return send(200, { ok: true, hresult: '00000000', queueItemId: t.qid, loadMs: 750 });
       } catch (e) { return send(500, { ok: false, error: String(e) }); }

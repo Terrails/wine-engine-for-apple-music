@@ -185,7 +185,7 @@ library items only), so the wrapper does what a link does (`wrapper/src/play.c`)
 panel is open. `queue_open()` (`wrapper/src/queue.c`) does what opening the panel does: sets
 `MainPageViewModel.IsPlayQueueOpen` and keeps a `PlayQueueViewModel` alive for the life of the
 process. Sections (`IPlayQueueSection.SectionKind`, slot 6): 1 history, 2 now playing, 3 "Playing
-Next" (Play Next items), 4 the rest of the album, 5 autoplay; their items answer
+Next" (Play Next and Add to Queue items), 4 the rest of the album, 5 autoplay; their items answer
 `IPlayQueueItem` (6 `PlayQueueItemID`). `IPlayQueue`: 8 `AutoPlayActive` (7 `AutoPlayEnabled`
 stays true), 12 `SetAutoPlayEnabledAsync`, 13 `PlayPlayQueueItemAsync`, 15
 `DeletePlayQueueItemsAsync(IVector<UINT64>)` (`/dequeue`). The status lists the items of
@@ -193,7 +193,7 @@ sections 3-5 (`queue_upcoming()`); with the walk the status still answers in 1-2
 that take a collection get `vec.c`'s small `IVector<T>` (with `IVectorView`, `IIterable` and
 `IIterator`; the pinterface IIDs for UINT64 and objects are in the file).
 
-### How `/enqueue` works (Play Next)
+### How `/enqueue` works (Play Next, Add to Queue)
 
 There is no call that queues a catalogue song. `StartOrQueuePlaybackArgs` with `QueueNext` and a
 catalogue `ContentDescriptor`, passed to `IPlayer.StartOrQueueLibraryPlaybackAsync`, completes
@@ -207,7 +207,14 @@ the track's context menu, as the UI builds it (`wrapper/src/play.c`):
    Add to Playlist (a submenu), Play "<title>", **Play Next**, Add to Queue, Create Station,
    Properties, Share. `IMenuItem`: 6 Id (empty for these), 9 Title (localised), 11 Segue.
 3. Run the Play Next item's Segue like a play action (`dispatch_action()`). The song appears in
-   section 3 about 0.5 s later, before earlier Play Next items.
+   section 3 about 0.5 s later, before earlier Play Next items. `at=end` runs the Add to Queue
+   item's Segue instead; the song lands at the end of section 3 (measured after `queue=single`).
+
+   The item is picked by its exact English title. Play Next has a fallback for other UI languages
+   (the item after the one naming the track); Add to Queue has none, because the item in its place
+   would be Create Station, which may replace playback (not tried). By the code of `AMP.Services.dll`
+   the menu builder adds Play, Shuffle, Play Next, Add to Queue and Create Station in that order, each
+   under its own condition.
 
 Building the menu calls `AMP::Utils::ClipboardContainsContentDescriptors()`, which asks WinRT's
 `Windows.ApplicationModel.DataTransfer.Clipboard`; Wine has no such class, the call throws
@@ -298,7 +305,7 @@ separate app preferences, while the ApplicationData settings (registry) are shar
 |---|---|
 | `main.c` | `amd.exe serve [port]` / `amd.exe signin`, exit codes |
 | `app.c` | start-up sequence above, `pump()` (message loop, queued dialogs, API requests) |
-| `play.c` | `/play`: album page by deep link, song in its album (album action + queue jump); `/enqueue` (Play Next from the context menu) |
+| `play.c` | `/play`: album page by deep link, song in its album (album action + queue jump); `/enqueue` (Play Next, Add to Queue from the context menu) |
 | `page.c` | page model: deep links, walking a page's or container's items, `dispatch_action()` |
 | `queue.c` | the play queue: open it, find, list and remove items, jump to one, autoplay |
 | `vec.c` | a small `IVector<T>` for arguments the app wants as a collection |
