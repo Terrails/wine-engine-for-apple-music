@@ -90,7 +90,7 @@ Details:
     next song could not be queued (the played one plays anyway). `amd.log` has an `API play next=` line.
   - The response comes when playback has been *requested*, not when sound starts; see
     "Timing".
-- **`/pause`, `/resume`, `/stop`, `/next`, `/previous`** call the player directly. `ok` and
+- **`/pause`, `/resume`, `/stop`, `/previous`** call the player directly (`/next` too, see below). `ok` and
   `hresult` say whether the engine accepted the call, not that its effect is complete; read
   `/status` to see the result.
 - **`/next`** also waits until the next item plays (3 s at most for the item to change; none
@@ -105,8 +105,8 @@ Details:
   end (measured: switched 0.6 s before the end with B queued right after the skip, 8.4 s with `next=`).
 - **`/seek`**: `ms` is the position in milliseconds from the start of the track. A missing
   value seeks to 0.
-- `/resume`, `/pause`, `/stop`, `/previous`, `/next`, `/seek` and `/volume` answer once the app has run the
-  command, after 0.5 s at the latest (measured 6-113 ms), so commands sent one after the other keep their order.
+- `/resume`, `/pause`, `/stop`, `/previous`, `/seek` and `/volume` answer once the app has run the
+  command (`/next`: see above), after 0.5 s at the latest (measured 6-113 ms), so commands sent one after the other keep their order.
 - **`/volume`**: `v` is clamped to 0..1. A missing value sets 0.
 - **`/quality`**: the streaming quality setting. It applies to tracks started afterwards and
   survives restarts (the agent keeps it in its own preferences). `quality` in the response is
@@ -138,7 +138,9 @@ Details:
 - **`/autoplay`**: the engine's autoplay (similar songs after the end of the queue). Off: the
   `autoplay` section empties and playback stops after the last queued item. Kept across
   restarts. `autoplay` in the response is read back.
-- **`/quit`**: answers first, then stops playback (about 1.5 s) and ends the service.
+- **`/quit`**: answers first, then stops playback (about 1.5 s) and ends the service. During an
+  `/enqueue` it is answered at once; the `/enqueue` then stops waiting (up to 5 s for a context menu
+  it has asked for), answers 503 `the service is quitting`, and playback stops after it.
   `bin/amd` then ends the prefix's Wine session, including the agent.
 
 ### Errors
@@ -160,7 +162,7 @@ Details:
 | 409 | `{"ok":false,"error":"nothing playing"}` | `/enqueue` with no current item |
 | 500 | `{"ok":false,"hresult":"8000ffff"}` (plus the fields of the success response) | the engine returned a failure HRESULT (`/enqueue`: `80004001` when the song's context menu has no Play Next, or no Add to Queue) |
 | 503 | `{"error":"player not ready"}` | any POST except `/quit` before the engine has a player |
-| 503 | `{"error":"the service is quitting"}` | a POST that was waiting when `/quit` ran |
+| 503 | `{"error":"the service is quitting"}` | a POST that was waiting when `/quit` ran, or an `/enqueue` that a `/quit` overtook |
 | 503 | `{"error":"timed out waiting for the player thread"}` | the request was not handled within 60 s |
 
 ## Status
@@ -206,7 +208,7 @@ Details:
 | `signedIn` | boolean | an account is signed in |
 | `playing` | boolean | the player is playing |
 | `paused` | boolean | the player is paused (`playing` and `paused` are both false when stopped or loading) |
-| `volume` | number 0..1 | the engine's volume. With nothing playing it can be stale; read it while a track plays |
+| `volume` | number 0..1 | the engine's volume. While nothing plays: the last value `/volume` set (the engine's own reading can be stale then); before the first `/volume` after a start, that reading |
 | `quality` | string | the **setting**: `aac`, `lossless`, `hires`, or `unknown` before the settings exist |
 | `nowPlaying` | object or `null` | the current item; `null` when nothing is loaded, while the item is a placeholder, or while it has no title yet (the first moments of loading) |
 | `crossfade` | object | the crossfade **setting**: `on` (boolean), `seconds` (integer); `{"on":false,"seconds":0}` before the settings exist |
@@ -263,8 +265,8 @@ If the agent dies, the service exits (code 4) and a UI that started it should st
 - **`/enqueue` takes about 0.7-1.4 s** (the album page loads, then the queue shows the item
   about 0.5 s after Play Next). The worst case is about 20 s (up to 10 s for the page, up to
   5 s for the context menu, up to 5 s for the item to reach the queue); a song that is not on
-  the page answers 404 after about 11-13 s. Like every request it holds up the others, except `/status`,
-  which is answered meanwhile; allow more than 20 s for the `/enqueue` itself. Send it well before the current track ends
+  the page answers 404 after about 11-13 s. Like every request it holds up the others, except `/status`
+  and `/quit`, which are answered meanwhile; allow more than 20 s for the `/enqueue` itself. Send it well before the current track ends
   (20-30 s ahead). `at=end` takes as long (0.9-1.6 s, eight calls).
 - A UI that advances its own queue with one `/play` per item has a gap of the deep-link load
   time between tracks. With `/enqueue` the engine continues by itself (next section).
@@ -306,8 +308,8 @@ short-lived thread each, at most 16 at once, more wait in the listen backlog; a 
 not arrive within 5 s is dropped), but the requests are handed to the main thread, which runs them
 **one at a time, in arrival order**. While a `/play` or any other request runs, a `/status` from
 another client waits until it is done. The exception is **`/enqueue`**: while one runs, queued
-`GET /status` requests are answered (one at a time, from the enqueue's own message pump) and
-everything else keeps its place until the `/enqueue` ends. `/status` is deliberately not answered
+`GET /status` and `POST /quit` requests are answered (one at a time, from the enqueue's own message
+pump) and everything else keeps its place until the `/enqueue` ends. `/status` is deliberately not answered
 during `/play`: it must not show the previous track while a play changes it. A request that waits
 more than 60 s gets a 503 (it no longer runs if it had not started); one whose client has gone away still runs. Once a
 `/quit` has been handled, other POSTs get a 503. Keep requests short and
@@ -328,7 +330,8 @@ curl -s -H 'Authorization: Bearer mocktoken' http://127.0.0.1:7699/status
 
 - The token is always **`mocktoken`**.
 - Like the service it handles **one request at a time**: a `/status` sent while a `/play` runs
-  waits for it, but one sent while an `/enqueue` runs is answered at once.
+  waits for it, but one sent while an `/enqueue` runs is answered at once, and so is a `/quit`
+  (the `/enqueue` then answers 503).
 - `/play` waits 0.9 s, looks the song up in the public iTunes Search API (network access
   needed; `storefront` default `AM_STOREFRONT`, else `us`) and starts it 0.4 s later. A song the
   lookup does not know gives the 404 of the real service (at once, not after about 10 s).

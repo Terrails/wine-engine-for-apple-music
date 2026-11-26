@@ -251,7 +251,7 @@ pactl unload-module "$MOD"
 
 `AM_AUDIO_IDLE_STREAM=1` brings back the agent's silent start-up stream, so you can verify the
 routing before anything audible plays. **Volume 0 is not a safe substitute**: with nothing
-playing, the reported volume can be stale, and the next track may play at a different level.
+playing, the engine's own volume reading can be stale, and the next track may play at a different level.
 
 ## Resetting the app's settings
 

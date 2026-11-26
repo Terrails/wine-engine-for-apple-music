@@ -9,6 +9,8 @@
 #include "signin.h"
 
 int api_quit_requested;
+/* the last volume /volume set (-1: none yet): PlayerState's Volume can be stale while nothing plays */
+static double api_volume = -1;
 
 static void reply(struct sreq *r, int status, const char *json)
 {
@@ -31,6 +33,7 @@ static void api_status(struct sreq *r)
 {
     struct player_status st; struct json j;
     player_status(&st);
+    if (!st.playing && api_volume >= 0) st.volume = api_volume;
     json_init(&j, r->body, sizeof(r->body));
     json_raw(&j, "{\"ready\":%s,\"signedIn\":%s,\"playing\":%s,\"paused\":%s,\"volume\":%.3f,\"quality\":\"%s\",\"nowPlaying\":",
              st.ready ? "true" : "false", account_signed_in() ? "true" : "false", st.playing ? "true" : "false",
@@ -337,6 +340,7 @@ static void api_enqueue(struct sreq *r)
 
     req.cc = cc; req.album = album; req.song = song; req.single = 0;
     play_enqueue(&req, &res, !strcmp(at, "end"));
+    if (api_quit_requested) { reply(r, 503, "{\"error\":\"the service is quitting\"}"); return; }   /* answered meanwhile */
     if (!res.found && SUCCEEDED(res.hr))
     {
         r->status = 404;
@@ -435,6 +439,7 @@ void api_handle(struct sreq *r)
         if (vol < 0) vol = 0;
         if (vol > 1) vol = 1;
         hr = ((HRESULT (WINAPI *)(void *, double, void **))VT(player)[27])(player, vol, &act);
+        if (SUCCEEDED(hr)) api_volume = vol;
         api_command(r, hr, act);
     }
     else reply(r, 404, "{\"error\":\"unknown endpoint\"}");

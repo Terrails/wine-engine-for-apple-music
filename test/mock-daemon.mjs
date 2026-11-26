@@ -7,9 +7,9 @@
 //              service: no /crossfade, /enqueue, /dequeue, /autoplay and none of their status fields;
 //              POST /mock/seamless?on=0|1 switches at run time).
 // Like the service it handles one request at a time (a /play holds up /status), except that a
-// /status is answered while an /enqueue runs; it reports
-// positionMs in steps of about a second, and ignores crossfade: the setting is kept, but the next
-// item starts at the end of the current one, as the engine does under Wine (docs/api.md).
+// /status or a /quit is answered while an /enqueue runs; it reports positionMs in steps of about a
+// second, and ignores crossfade: the setting is kept, but the next item starts at the end of the
+// current one, as with lossless on the engine (which crossfades only AAC items queued in time, docs/api.md).
 import http from 'http';
 const PORT = +process.argv[2] || 7699;
 const SPEED = +process.env.MOCK_SPEED || 1;
@@ -18,7 +18,7 @@ let hung = null;   // POST /mock/hang?call=<phase> (empty: recovered): the agent
 let quality = 'lossless', vol = 0.05, cur = null, playing = false, paused = false, pos = 0, at = 0;
 let seamless = !process.env.MOCK_NO_SEAMLESS;
 let autoplay = !!process.env.MOCK_AUTOPLAY, crossfade = { on: false, seconds: 6 };
-let upNext = [], auto = null, qid = 1000;   // next-added items, the autoplay item; qid: the last queue item ID
+let upNext = [], auto = null, qid = 1000, quits = 0;   // next-added items, the autoplay item; qid: the last queue item ID; quits: /quit count (an /enqueue that a /quit overtook answers 503)
 const now = () => Date.now();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const elapsed = () => (now() - at) * SPEED;
@@ -87,11 +87,14 @@ async function handle(req, res) {
       if (!digits(q.song) || !digits(q.album)) return send(400, { ok: false, error: 'need song=<id>&album=<id>, numeric' });
       if (q.at && !['next', 'end'].includes(q.at)) return send(400, { ok: false, error: 'at must be next or end' });
       if (!cur) return send(409, { ok: false, error: 'nothing playing' });
+      const q0 = quits;
       await sleep(400);   // the album page
       try {
         const t = await lookup(q);
+        if (quits !== q0) return send(503, { error: 'the service is quitting' });   // a /quit answered meanwhile
         if (!t) return send(404, NOT_FOUND(400));
         await sleep(350); // Play Next until the item shows in the queue
+        if (quits !== q0) return send(503, { error: 'the service is quitting' });
         if (q.at === 'end') upNext.push(t); else upNext.unshift(t);
         log('enqueued', t.title, t.qid);
         return send(200, { ok: true, hresult: '00000000', queueItemId: t.qid, loadMs: 750 });
@@ -127,9 +130,9 @@ async function handle(req, res) {
       return send(200, { ok: true, hresult: '00000000', loadMs: 1200, ...(n && cur ? { nextQueueItemId: n.qid } : { nextQueued: false }) });
     }
     case '/previous': break;   // no history in the mock: accepted, nothing changes
-    case '/quit': cur = null; playing = paused = false; pos = 0; upNext = []; break;   // the mock keeps running for the next test
+    case '/quit': quits++; cur = null; playing = paused = false; pos = 0; upNext = []; break;   // the mock keeps running for the next test
     case '/seek': pos = +q.ms || 0; at = now(); break;
-    case '/volume': vol = +q.v; break;
+    case '/volume': vol = Math.min(1, Math.max(0, +q.v || 0)); break;   // clamped; missing: 0, as the service does
     case "/quality": quality = q.q; break;
     case '/mock/hang': hung = q.call || null; break;
     case '/mock/seamless': seamless = q.on !== '0'; if (!seamless) upNext = []; break;
@@ -137,13 +140,13 @@ async function handle(req, res) {
   }
   send(200, { ok: true, hresult: '00000000' });
 }
-// one request at a time, like the service's single dispatch thread; but a GET /status that arrives
-// while an /enqueue runs is answered at once (the service does that from the enqueue's message pump).
-// During /play and every other request it waits its turn.
+// one request at a time, like the service's single dispatch thread; but a GET /status or POST /quit
+// that arrives while an /enqueue runs is answered at once (the service does that from the enqueue's
+// message pump). During /play and every other request it waits its turn.
 let line = Promise.resolve(), running = null;
 http.createServer((req, res) => {
   const path = req.url.split('?')[0];
-  if (path === '/status' && req.method === 'GET' && running === '/enqueue') {
+  if (running === '/enqueue' && ((path === '/status' && req.method === 'GET') || (path === '/quit' && req.method === 'POST'))) {
     handle(req, res).catch((e) => log('!!', e));
     return;
   }

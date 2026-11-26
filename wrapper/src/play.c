@@ -7,6 +7,7 @@
  * the header's action and then jump to the song in the play queue. */
 #include "play.h"
 #include "oslog.h"
+#include "api.h"
 #include "page.h"
 #include "player.h"
 #include "queue.h"
@@ -112,7 +113,7 @@ static int load_album_page(const struct play_request *req, page_ready_fn ready_f
         if (page && !ready && i == 99) page_list(cpage, NULL);
         if (page) IUnknown_Release((IUnknown *)page);
         IUnknown_Release((IUnknown *)cpage);
-        if (oslog_agent_lost) break;
+        if (oslog_agent_lost || api_quit_requested) break;   /* a /quit answered during /enqueue */
     }
     LOG("%s song=%s album=%s -> %s after %lu ms (loading=%d pageError=%d)", what, req->song, req->album,
         ready ? "found" : "NOT FOUND", GetTickCount() - t0, loading, err);
@@ -254,10 +255,18 @@ void play_enqueue(const struct play_request *req, struct play_result *res, int a
     queue_open();
     MultiByteToWideChar(CP_UTF8, 0, req->song, -1, song, ARRAY_SIZE(song));
     if (!load_album_page(req, row_ready, &r, res, "enqueue")) { res->ms = GetTickCount() - t0; return; }
+    if (api_quit_requested)   /* answered while the page loaded: ask for no menu now */
+    {
+        IInspectable_Release(r.item);
+        WindowsDeleteString(r.title);
+        res->ms = GetTickCount() - t0;
+        return;
+    }
     before = queue_max_id();
     res->hr = run_queue_cmd(r.item, wz(r.title), cmd);
     t1 = GetTickCount();
-    while (SUCCEEDED(res->hr) && !res->queue_item_id && GetTickCount() - t1 < ENQUEUE_WAIT_MS && !oslog_agent_lost)
+    while (SUCCEEDED(res->hr) && !res->queue_item_id && GetTickCount() - t1 < ENQUEUE_WAIT_MS && !oslog_agent_lost
+           && !api_quit_requested)
     {
         pump(50);
         res->queue_item_id = queue_find(song, before, &kind);

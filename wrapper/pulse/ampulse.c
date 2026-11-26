@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later */
-/* libampulse.so: names the agent's audio stream after the track being played.
+/* libampulse.so: names the agent's audio stream after the track being played, and keeps a muted
+ * stream muted on the next track (pa_stream_connect_playback, below).
  *
  * Linux library, preloaded (LD_PRELOAD) into the Wine session by bin/amd. Wine's
  * winepulse.so names every stream after the program; mixers show the client name (application.name,

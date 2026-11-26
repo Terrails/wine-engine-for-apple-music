@@ -25,7 +25,7 @@ addition:
 
 | Command | Builds | Needs |
 |---|---|---|
-| `make -C wrapper` | `wrapper/build/amd.exe` (the service) and `wrapper/build/libampulse.so` (Linux, the stream name) | winegcc, a C compiler, libpulse headers |
+| `make -C wrapper` | `wrapper/build/amd.exe` (the service) and `wrapper/build/libampulse.so` (Linux, the stream name and mute) | winegcc, a C compiler, libpulse headers |
 | `make -C wrapper lab` | `wrapper/build/lab.exe` from `dev/lab/lab.c` plus `wrapper/src` without `main.c` | as above; optionally the app's metadata (below) |
 | `shim/build.sh` | `shim/amshim.dll` (generated + hand-written) | winegcc, Python with dnfile, the Windows metadata |
 | `shim/ampkg/build.sh` | `shim/ampkg/ampkg.dll` | winegcc |

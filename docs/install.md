@@ -38,7 +38,7 @@ Minimum, in short:
 | Wine's `winepulse` audio driver | audio output | part of a normal Wine build with PulseAudio support |
 | GnuTLS (Wine's TLS backend) | every HTTPS connection of the app (sign-in, catalogue, playback) | any version your Wine was built against |
 | PulseAudio, or PipeWire with `pipewire-pulse` | audio output | tested: PipeWire with pipewire-pulse |
-| libpulse development headers (`pulse/stream.h`) | `libampulse.so` (names the audio stream after the track) | any recent version |
+| libpulse development headers (`pulse/stream.h`) | `libampulse.so` (names the audio stream after the track, keeps its mute) | any recent version |
 | A C compiler (`cc`) and `make` | `libampulse.so`, the build | any recent version |
 | `winetricks` | installs `vcrun2022`, `dxvk` and the `sandbox` setting into the prefix | tested: 20260125. Old distribution packages may fail to download components. |
 | Python 3 with `dnfile` and `pefile` (`requirements.txt`) | the WinRT metadata code generator and the PE patching tools | tested: Python 3.14 with the pinned dnfile 0.18.0 and pefile 2024.8.26. Older Python versions are untested. |
@@ -55,7 +55,7 @@ Why these exact pieces:
   fails with `winegcc: Could not find gcc`.
 - Audio goes through Wine's `winepulse` driver. `bin/amd` preloads a small Linux library
   (`wrapper/build/libampulse.so`) into the Wine session that hooks libpulse to give the stream a
-  readable name; with another Wine audio driver that part does nothing and playback is untested.
+  readable name and keep its mute across tracks; with another Wine audio driver that part does nothing and playback is untested.
 - The app's TLS goes through Wine's `secur32`/schannel, which uses GnuTLS. Without GnuTLS support
   in your Wine build, nothing can connect.
 - `widl` compiles the proxy/stub DLL in `shim/ps/` and needs Wine's IDL files

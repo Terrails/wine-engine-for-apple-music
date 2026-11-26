@@ -8,7 +8,8 @@
 # Environment: AM_PREFIX, AM_LOG_DIR (see bin/amd-env.sh),
 #              AM_STOREFRONT (default "us": country code for album links, e.g. gb),
 #              AMD_WINEDEBUG (default err), AM_AUDIO_NAME (name shown in the mixer),
-#              AM_AUDIO_TRACK_NAME=0 (do not name the audio stream after the track),
+#              AM_AUDIO_TRACK_NAME=0 (do not preload libampulse.so: no track name on the audio stream,
+#                                     and its mute is not kept across tracks),
 #              AM_KEEP_WINESERVER (set to any value, even 0: do not restart the Wine session),
 #              PULSE_LATENCY_MSEC (audio buffer on the PulseAudio side, default 100).
 ROOT="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
@@ -25,7 +26,7 @@ unset AM_OSLOG_ARGS AM_DIALOG_AUTO AM_TEST_USER AM_TEST_PASS
 # environment override that, so mixers (pavucontrol, PipeWire) show "Apple Music" instead.
 # The stream itself (media.name, Wine: "audio stream #n") gets "<artist> - <title>": amd.exe writes
 # it to a file, build/libampulse.so (pulse/ampulse.c, preloaded) renames the stream from it.
-# Plasma then shows "Apple Music · <artist> - <title>".
+# Plasma then shows "Apple Music · <artist> - <title>". It also keeps a muted stream muted on the next track.
 if [ "${AM_AUDIO_TRACK_NAME:-1}" != 0 ]; then
     export LD_PRELOAD="$WRAPPER/build/libampulse.so${LD_PRELOAD:+:$LD_PRELOAD}"
     export AM_MEDIA_NAME_FILE="$WINEPREFIX/drive_c/users/${USER:-$(id -un)}/AppData/Local/AppleMusicWrapper/media-name"

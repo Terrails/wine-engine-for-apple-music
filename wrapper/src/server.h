@@ -4,15 +4,16 @@
  * A socket thread accepts connections (one short-lived thread each, at most 16) and queues
  * their requests for the main (UI) thread, which is the only thread allowed to talk to
  * AMP.Services; server_process() runs there, from the message loop, one request at a time in
- * order. The one exception: GET /status is answered while a /enqueue runs (server.c).
+ * order. The one exception: GET /status and POST /quit are answered while a /enqueue runs (server.c).
  * Every request must carry "Authorization: Bearer <token>"; the token is random per start and written to %LOCALAPPDATA%\AppleMusicWrapper\token (so only local programs
  * that can read the user's files get in, and web pages cannot drive it cross-site: there are
  * no CORS headers and the custom header forces a preflight that is refused).
  *
  *   GET  /status                              state + now playing
- *   POST /play?song=<id>&album=<id>[&storefront=<cc>]   play a catalogue song
+ *   POST /play?song=<id>&album=<id>[&storefront=<cc>][&queue=single][&next=<id>&nextAlbum=<id>]   play a catalogue song
  *   POST /play?album=<id>[&storefront=<cc>]             play a catalogue album
- *   POST /pause  /resume  /stop  /next  /previous
+ *   POST /pause  /resume  /stop  /previous
+ *   POST /next[?next=<id>&nextAlbum=<id>[&storefront=<cc>]]
  *   POST /seek?ms=<position>
  *   POST /volume?v=<0..1>
  *   POST /quality?q=aac|lossless|hires

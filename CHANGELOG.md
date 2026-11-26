@@ -34,17 +34,22 @@ First public release. Supports Apple Music for Windows 1.1792.39942.0 (x64).
   engine acts on it only with AAC and a next item queued early (docs/api.md).
 - `/enqueue` with `at=end`: Add to Queue instead of Play Next (behind the songs already queued).
 - `bin/amctl enqueue`, `dequeue`, `crossfade`, `autoplay`.
-- `GET /status` is answered while an `/enqueue` runs; connections are accepted concurrently (at
+- `GET /status` and `POST /quit` are answered while an `/enqueue` runs (which then stops waiting); connections are accepted concurrently (at
   most 16 at once, slow or silent clients time out) and requests still run one at a time on the engine's
   thread. A request that timed out no longer leaks, and requests queued
   behind a `/quit` no longer run.
 - Player commands (`/pause`, `/seek`, `/volume`, ...) answer once the app has run them, so that commands
   sent close together keep their order.
+- `/next` waits until the next item plays, and pauses and plays it when the agent leaves it at 0 ms.
+- `/play` and `/next` take `next=<id>&nextAlbum=<id>`: that song is queued behind the new item, so the
+  change into it can be crossfaded (`nextQueueItemId` or `"nextQueued":false` in the answer).
 - `/dequeue` checks the current item again right before deleting.
+- While nothing plays, `volume` in the status is the last value `/volume` set (the engine's own reading
+  can be stale then).
 - The mock service has the new endpoints and status fields, handles one request at a time like
-  the service (`/status` is answered during `/enqueue`), and can act as an older service (`MOCK_NO_SEAMLESS=1`, `POST /mock/seamless`).
+  the service (`/status` and `/quit` are answered during `/enqueue`), and can act as an older service (`MOCK_NO_SEAMLESS=1`, `POST /mock/seamless`).
 - The audio stream is named "Apple Music" with `<artist> - <title>` as its stream name in
-  PulseAudio/PipeWire mixers (`libampulse.so`).
+  PulseAudio/PipeWire mixers (`libampulse.so`); a stream muted in a mixer stays muted on the next track.
 - `PULSE_LATENCY_MSEC=100` by default against clicks under CPU load.
 - The service ends the process directly on quit, avoiding a crash in the app's static
   destructors under Wine, and ends the prefix's Wine session after `/quit`.

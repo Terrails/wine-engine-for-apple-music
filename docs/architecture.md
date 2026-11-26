@@ -34,7 +34,7 @@ Installing is covered in [install.md](install.md), settings and environment vari
 │   └─ audio: mmdevapi → winepulse.so ─────────────┐                                    │
 └──────────────────────────────────────────────────│────────────────────────────────────┘
                                                    ▼
-                          libampulse.so (LD_PRELOAD, names the stream)  →  PulseAudio / PipeWire
+                          libampulse.so (LD_PRELOAD, names the stream, keeps its mute)  →  PulseAudio / PipeWire
 ```
 
 - **`amd.exe`** is the wrapper service, built from `wrapper/src` with winegcc. `bin/amd` copies
@@ -57,7 +57,7 @@ Installing is covered in [install.md](install.md), settings and environment vari
   MRT Core).
 - **`libampulse.so`** is a Linux library (`wrapper/pulse/ampulse.c`), not a Windows DLL.
   `bin/amd` preloads it into the Wine session to give the agent's audio stream the name of the
-  track (see "Audio").
+  track and keep its mute across tracks (see "Audio").
 
 The service is single-instance per prefix and is meant to be the only player: several UIs may
 read its status, but one UI controls playback at a time (see "Design notes").
@@ -325,7 +325,7 @@ separate app preferences, while the ApplicationData settings (registry) are shar
 | `medianame.c` | now-playing name for the mixer |
 | `async.c`, `winrt.c`, `iat.c`, `log.c` | async objects, WinRT helpers, import patching, logging |
 | `common.h` | `VT`/`CALL0`/`CALL1` vtable calls, shared declarations |
-| `../pulse/ampulse.c` | `libampulse.so` (Linux, LD_PRELOAD): stream name from the media-name file |
+| `../pulse/ampulse.c` | `libampulse.so` (Linux, LD_PRELOAD): stream name from the media-name file, keeps a stream's saved mute |
 
 `dev/lab/lab.c` builds `lab.exe` from the same sources minus `main.c`, for experiments
 ([development.md](development.md)). Wrapper log lines start with `wrapper: `.

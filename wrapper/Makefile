@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # Wrapper programs (Windows executables built with winegcc):
 #   build/amd.exe         the service (src/)
-#   build/libampulse.so   Linux library preloaded by bin/amd: track name for the mixer (pulse/)
+#   build/libampulse.so   Linux library preloaded by bin/amd: track name for the mixer, kept mute (pulse/)
 #   build/lab.exe         experiments (../dev/lab/lab.c + src/ minus main.c), `make lab` only
 # `make` builds amd.exe and libampulse.so; only changed files are recompiled.
 # `make lab` also generates build/iids_gen.h from the app's own metadata (tools/geniids.py) when it

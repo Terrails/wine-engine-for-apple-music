@@ -83,12 +83,13 @@ static volatile LONG srv_conns;
 static struct srv_conn { SOCKET s; DWORD seq; int used, reading; } srv_slots[SRV_MAX_CONN];   /* under srv_cs */
 static int srv_status_ok, srv_nested;   /* main thread only: see server_process() */
 
-/* take the first queued request off the list (status_only: the first GET /status); call with srv_cs held */
-static struct sreq *srv_take_locked(int status_only)
+/* take the first queued request off the list (nested: the first GET /status or POST /quit); call with srv_cs held */
+static struct sreq *srv_take_locked(int nested)
 {
     struct sreq *r, *prev = NULL;
     for (r = srv_head; r; prev = r, r = r->next)
-        if (!status_only || (!strcmp(r->method, "GET") && !strcmp(r->path, "/status"))) break;
+        if (!nested || (!strcmp(r->method, "GET") && !strcmp(r->path, "/status"))
+            || (!strcmp(r->method, "POST") && !strcmp(r->path, "/quit"))) break;
     if (!r) return NULL;
     if (prev) prev->next = r->next; else srv_head = r->next;
     if (srv_tail == r) srv_tail = prev;
@@ -257,10 +258,11 @@ static DWORD WINAPI srv_thread(void *arg)
 }
 
 /* The main thread runs the handler of one request at a time. While a /enqueue handler runs (and
- * pumps, which calls this again) queued GET /status requests are answered too, one at a time and
- * never from within another status; every other request keeps its place in the queue until the
- * handler ends. During /play and the rest nothing is taken: /status must not show the previous
- * track while a /play is changing it. */
+ * pumps, which calls this again) queued GET /status and POST /quit requests are answered too, one
+ * at a time and never from within another of them; every other request keeps its place in the queue
+ * until the handler ends. A /quit only sets api_quit_requested: the /enqueue then stops waiting, and
+ * the main loop stops playback once it has returned. During /play and the rest nothing is taken:
+ * /status must not show the previous track while a /play is changing it. */
 void server_process(void)
 {
     for (;;)

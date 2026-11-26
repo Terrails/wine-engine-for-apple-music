@@ -31,15 +31,15 @@ either.
 and lyrics from another source, e.g. music.apple.com (the Sidra fork) or the public iTunes Search
 API.
 
-### `volume` in the status can be stale while nothing plays
+### `volume` in the status can be stale after a restart
 
-With nothing playing, `GET /status` can report a volume that is not the one in effect (for
-example `1.0` after `/volume?v=0`, or `0` after a restart although `1` had been set). Setting the
-volume always works; only the reading is wrong. UIs that adopt the service's volume at start-up
-can show the stale value.
+The engine's own reading of the volume (`PlayerState.Volume`) can be stale while nothing plays (for
+example `1.0` after `/volume?v=0`, or `0` after a restart although `1` had been set). While nothing
+plays, the status therefore reports the last value `/volume` set; until the first `/volume` after a
+start it reports the engine's reading, which can be wrong. Setting the volume always works. UIs that
+adopt the service's volume at start-up can show the stale value.
 
-**Workaround:** trust the reported volume only while a track is playing; set it explicitly before
-playing if it matters.
+**Workaround:** set the volume once after the service starts, or read it while a track plays.
 
 ### Memory still grows a little with every album page (`/play`, `/enqueue`)
 
@@ -65,16 +65,17 @@ clipboard). A later app version may change the menu.
 **Workaround:** none needed with the supported version; a 500 with `hresult` `80004001` means
 the menu had no Play Next (or no Add to Queue).
 
-### `/enqueue` holds up the other requests (but not `/status`)
+### `/enqueue` holds up the other requests (but not `/status` and `/quit`)
 
 Requests are handled one at a time on the engine's thread, and `/enqueue` loads the album page
 like `/play` and then builds a context menu (typically 0.7-1.4 s, up to about 20 s; 404 after
 about 11-13 s for a song that is not on the page). `GET /status` is answered while it runs (from its
-message pump; 9 ms or less, measured during `/enqueue` calls of up to 11 s); other requests, such as `/play`,
-`/pause` or a second `/enqueue`, wait for it.
+message pump; 9 ms or less, measured during `/enqueue` calls of up to 11 s), and so is `/quit` (the
+`/enqueue` then stops waiting and answers 503); other requests, such as `/play`, `/pause` or a second
+`/enqueue`, wait for it.
 
 **Workaround:** enqueue the next track 20-30 s before the current one ends, not at the last
-moment, and allow for a slow answer from anything but `/status` meanwhile.
+moment, and allow for a slow answer from anything but `/status` and `/quit` meanwhile.
 
 ### Audio clicks in long sessions are not ruled out
 
