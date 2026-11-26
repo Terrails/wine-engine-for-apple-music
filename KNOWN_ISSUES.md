@@ -51,7 +51,7 @@ The `/crossfade` setting is always stored and kept, but the engine acts on it on
 - the next item was queued before the current one started. The agent decides how a track ends
   when it prepares and starts it; a Play Next item added later does not change the decision
   (a `/pause` and `/resume` after it does, at the cost of a short silence: 0.2 s in the one case
-  measured).
+  measured). `/play` with `next=` does this at the start of the played song (`docs/api.md`).
 - the next item is a catalogue item, not an autoplay (station) item (measured), and, by the agent's
   code (not measured), not the next track of the same album.
 

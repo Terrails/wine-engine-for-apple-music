@@ -71,9 +71,15 @@ async function handle(req, res) {
       try {
         const t = await lookup(q);
         if (!t) return send(404, NOT_FOUND(900));
+        // next=&nextAlbum=: that song queued behind it before it goes on (the service pauses, enqueues, plays)
+        if ((q.next || q.nextAlbum) && !(digits(q.next) && digits(q.nextAlbum) && q.song))
+          return send(400, { ok: false, error: 'next=<id> needs nextAlbum=<id> and a song, numeric' });
+        const n = q.next ? await lookup({ song: q.next, album: q.nextAlbum, storefront: q.storefront }) : null;
         // queue=single: the song alone replaces the queue, enqueued items included
-        setTimeout(() => { upNext = []; start(t); log('now playing', cur.title, cur.dur); }, 400);
-        return send(200, { ok: true, hresult: '00000000', loadMs: 900 });
+        setTimeout(() => { upNext = n ? [n] : []; start(t); log('now playing', cur.title, cur.dur, n ? `next ${n.title} ${n.qid}` : ''); }, 400);
+        if (!q.next) return send(200, { ok: true, hresult: '00000000', loadMs: 900 });
+        await sleep(1150);   // paused, Play Next, paused and played
+        return send(200, { ok: true, hresult: '00000000', loadMs: 900, ...(n ? { nextQueueItemId: n.qid } : { nextQueued: false }) });
       } catch (e) { return send(500, { ok: false, error: String(e) }); }
     }
     case '/enqueue': {   // Play Next: right after the current item, before earlier ones; what plays goes on
@@ -110,7 +116,16 @@ async function handle(req, res) {
     case '/pause': if (playing) { pos = position(); playing = false; paused = true; } break;
     case '/resume': if (cur && !playing) { at = now(); playing = true; paused = false; } break;
     case '/stop': cur = null; playing = paused = false; pos = 0; break;
-    case '/next': if (cur) advance('/next'); break;
+    case '/next': {   // next=&nextAlbum=: that song queued behind the new item before it goes on
+      if ((q.next || q.nextAlbum) && !(digits(q.next) && digits(q.nextAlbum)))
+        return send(400, { ok: false, error: 'next=<id> needs nextAlbum=<id>, numeric' });
+      if (!cur) break;
+      advance('/next');
+      if (!q.next) break;
+      const n = await lookup({ song: q.next, album: q.nextAlbum, storefront: q.storefront }).catch(() => null);
+      if (n && cur) { upNext.unshift(n); log('/next queued', n.title, n.qid); }
+      return send(200, { ok: true, hresult: '00000000', loadMs: 1200, ...(n && cur ? { nextQueueItemId: n.qid } : { nextQueued: false }) });
+    }
     case '/previous': break;   // no history in the mock: accepted, nothing changes
     case '/quit': cur = null; playing = paused = false; pos = 0; upNext = []; break;   // the mock keeps running for the next test
     case '/seek': pos = +q.ms || 0; at = now(); break;

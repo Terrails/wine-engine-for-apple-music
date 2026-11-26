@@ -50,11 +50,11 @@ main process) and never hand the token to the page.
 | Endpoint | Parameters | Success response |
 |---|---|---|
 | `GET /status` | none | the status object (below) |
-| `POST /play` | `album=<id>` (required), `song=<id>`, `storefront=<cc>`, `queue=single` | `{"ok":true,"hresult":"00000000","loadMs":812}` |
+| `POST /play` | `album=<id>` (required), `song=<id>`, `storefront=<cc>`, `queue=single`, `next=<id>` + `nextAlbum=<id>` | `{"ok":true,"hresult":"00000000","loadMs":812}` |
 | `POST /pause` | none | `{"ok":true,"hresult":"00000000"}` |
 | `POST /resume` | none | same |
 | `POST /stop` | none | same |
-| `POST /next` | none | same |
+| `POST /next` | `next=<id>` + `nextAlbum=<id>`, `storefront=<cc>` (optional) | same; with `next`: as `/play` with `next` |
 | `POST /previous` | none | same |
 | `POST /seek` | `ms=<position>` | same |
 | `POST /volume` | `v=<0..1>` | same |
@@ -80,11 +80,29 @@ Details:
     ...). Default: the service's `AM_STOREFRONT`, else `us`. A value that is not all
     lowercase letters is replaced by `us`.
   - `loadMs`: milliseconds until playback was requested.
+  - `next` and `nextAlbum` (both numeric, only with a `song`): a song to queue right behind the
+    played one ("Play Next", as `/enqueue`), so that its change into it can be crossfaded: the agent
+    decides about a crossfade when it starts a track, and a song queued later only counts after a
+    pause and a play. The engine pauses the played song as soon as it is the current item, queues
+    the next one, then pauses and plays (see `/next`). The answer comes after that (the enqueue's
+    0.7-2.6 s more; the song may play for a moment first) and adds `nextQueueItemId` (as
+    `/enqueue`'s `queueItemId`, `""` if it did not show up in time), or `"nextQueued":false` when the
+    next song could not be queued (the played one plays anyway). `amd.log` has an `API play next=` line.
   - The response comes when playback has been *requested*, not when sound starts; see
     "Timing".
 - **`/pause`, `/resume`, `/stop`, `/next`, `/previous`** call the player directly. `ok` and
   `hresult` say whether the engine accepted the call, not that its effect is complete; read
   `/status` to see the result.
+- **`/next`** also waits until the next item plays (3 s at most for the item to change; none
+  when nothing is next). Right after a skip the agent can show the new item as playing and stay
+  at 0 ms without sound (seen on every skip that came right after a `/pause`); the engine then
+  pauses and plays it (once at once when it was paused before, else after 1.5 s at 0 ms; twice at
+  most). So `/next` from a paused player plays the next item. It takes about the time of the
+  item change, plus 0.2 s for a pause and play; `amd.log` has an `API next:` line for each.
+  With `next` and `nextAlbum`: that song is queued behind the new item before it goes on, as with
+  `/play` (while the pause holds; the answer has `loadMs`, `nextQueueItemId` or `"nextQueued":false`).
+  Without it, a skip into an item with nothing queued behind it cannot crossfade at that item's
+  end (measured: switched 0.6 s before the end with B queued right after the skip, 8.4 s with `next=`).
 - **`/seek`**: `ms` is the position in milliseconds from the start of the track. A missing
   value seeks to 0.
 - `/resume`, `/pause`, `/stop`, `/previous`, `/next`, `/seek` and `/volume` answer once the app has run the

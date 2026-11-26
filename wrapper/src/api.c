@@ -95,22 +95,183 @@ static void api_quality(struct sreq *r)
     snprintf(r->body, sizeof(r->body), "{\"ok\":%s,\"hresult\":\"%08lx\",\"quality\":\"%s\"}", SUCCEEDED(hr) ? "true" : "false", hr, quality_get());
 }
 
+static void api_command(struct sreq *r, HRESULT hr, void *act);
+
+/* The agent can show an item that was just started as playing and stay at 0 ms, with no sound,
+ * until a Pause and a Play (seen on every /next right after a /pause, 2026-11-26). */
+#define START_SWITCH_MS 3000   /* how long the item may take to change (none: nothing next) */
+#define START_MOVE_MS 1500     /* and the position, before a pause and play (chosen) */
+static void player_cmd(void *player, int slot)
+{
+    void *act = NULL; HRESULT err;
+    if (SUCCEEDED(CALL1(player, slot, &act)) && act) { await_async(act, 5, 100, &err); IUnknown_Release((IUnknown *)act); }
+}
+static void pause_play(void *player) { player_cmd(player, 13); player_cmd(player, 12); }   /* Pause, Play */
+
+struct started { UINT64 id; INT64 pos; DWORD ms; int switched, kicks; };
+/* wait until the current item is no longer `before` (0: any item), then until it plays off 0 ms;
+ * pause and play it at once with `kick_now`, else after START_MOVE_MS at 0 ms, twice at most */
+static void wait_started(void *player, UINT64 before, int kick_now, struct started *o)
+{
+    struct player_status st; DWORD t0 = GetTickCount(), since = 0;
+    memset(o, 0, sizeof(*o));
+    for (;;)
+    {
+        DWORD now = GetTickCount(); int playing;
+        player_status(&st);
+        o->id = st.has_item ? st.queue_item_id : 0; playing = st.playing; o->pos = st.position_ms;
+        player_status_free(&st);
+        if (!o->switched)
+        {
+            if (!o->id || o->id == before) { if (now - t0 >= START_SWITCH_MS) break; pump(50); continue; }
+            o->switched = 1; since = now;
+        }
+        if (playing && o->pos > 0) break;
+        if (o->kicks < 2 && ((kick_now && !o->kicks) || now - since >= START_MOVE_MS))
+        {
+            LOG("API start: item %I64u %s at %I64d ms, pause and play", o->id, playing ? "playing" : "not playing", o->pos);
+            pause_play(player);
+            o->kicks++;
+            since = GetTickCount();
+        }
+        else if (o->kicks == 2 && now - since >= START_MOVE_MS) break;
+        pump(50);
+    }
+    o->ms = GetTickCount() - t0;
+}
+
+static UINT64 current_item(int *paused)
+{
+    struct player_status st; UINT64 id;
+    player_status(&st);
+    id = st.has_item ? st.queue_item_id : 0;
+    if (paused) *paused = st.paused;
+    player_status_free(&st);
+    return id;
+}
+
+/* the current item once it is no longer `before`, 0 if that takes START_SWITCH_MS (from t0) */
+static UINT64 wait_new_item(UINT64 before, DWORD t0)
+{
+    UINT64 id;
+    while (((id = current_item(NULL)) == 0 || id == before) && GetTickCount() - t0 < START_SWITCH_MS) pump(20);
+    return id && id != before ? id : 0;
+}
+
+/* next=<song>&nextAlbum=<album> of /play and /next: 0 none, 1 both numeric, -1 malformed */
+static int next_params(struct sreq *r, char *next, char *album)
+{
+    srv_param(r, "next", next, 32); srv_param(r, "nextAlbum", album, 32);
+    if (!next[0] && !album[0]) return 0;
+    return next[0] && album[0] && all_digits(next) && all_digits(album) ? 1 : -1;
+}
+
+/* with the player paused on the item that was just started: queue `next` behind it (Play Next),
+ * then start the item again (wait_started() with a pause and play at once, which makes the agent
+ * decide about a crossfade into it again). nid: its queue item ID ("" if it did not show up). */
+static int queue_next_and_start(void *player, const char *cc, const char *next, const char *album,
+                                char *nid, struct started *o)
+{
+    struct play_request nreq = { cc, album, next, 0 }; struct play_result nres = { 0 }; int queued;
+    play_enqueue(&nreq, &nres, 0);
+    queued = nres.found && SUCCEEDED(nres.hr);
+    nid[0] = 0;
+    if (nres.queue_item_id) sprintf(nid, "%I64u", nres.queue_item_id);
+    wait_started(player, 0, 1, o);
+    return queued;
+}
+
+static void next_reply(struct sreq *r, HRESULT hr, DWORD ms, int queued, const char *nid)
+{
+    r->status = SUCCEEDED(hr) ? 200 : 500;
+    if (queued)   /* nextQueueItemId "" when it did not show up in the queue within 5 s */
+        snprintf(r->body, sizeof(r->body), "{\"ok\":%s,\"hresult\":\"%08lx\",\"loadMs\":%lu,\"nextQueueItemId\":\"%s\"}",
+                 SUCCEEDED(hr) ? "true" : "false", hr, ms, nid);
+    else
+        snprintf(r->body, sizeof(r->body), "{\"ok\":%s,\"hresult\":\"%08lx\",\"loadMs\":%lu,\"nextQueued\":false}",
+                 SUCCEEDED(hr) ? "true" : "false", hr, ms);
+}
+
+static const char *storefront_param(struct sreq *r, char *cc)
+{
+    srv_param(r, "storefront", cc, 8);
+    if (!cc[0] && !GetEnvironmentVariableA("AM_STOREFRONT", cc, 8)) strcpy(cc, "us");
+    if (!all_lower(cc)) strcpy(cc, "us");
+    return cc;
+}
+
+/* POST /next[?next=<song>&nextAlbum=<album>[&storefront=<cc>]]: SkipNext, and the next item started
+ * (see wait_started(); at once when the player was paused before: a UI that is told to skip pauses
+ * first). With next=: that song is queued behind the new item before it goes on, as with /play. */
+static void api_next(struct sreq *r, void *player)
+{
+    char cc[8], next[32], next_album[32], nid[24] = "";
+    void *act = NULL; HRESULT hr; int was_paused, with_next, queued = 0; struct started o = { 0 };
+    UINT64 before, id = 0; DWORD t0;
+    if ((with_next = next_params(r, next, next_album)) < 0)
+    { reply(r, 400, "{\"ok\":false,\"error\":\"next=<id> needs nextAlbum=<id>, numeric\"}"); return; }
+    storefront_param(r, cc);
+    before = current_item(&was_paused);
+    t0 = GetTickCount();
+    hr = CALL1(player, 17, &act);                                       /* SkipNext */
+    api_command(r, hr, act);
+    if (FAILED(hr)) return;
+    if (with_next)
+    {
+        if ((id = wait_new_item(before, t0)))
+        {
+            player_cmd(player, 13);                                     /* Pause */
+            queued = queue_next_and_start(player, cc, next, next_album, nid, &o);
+            LOG("API next next=%s: %I64u -> %I64u, %s, queue item %s, %d pause and play, started at %I64d ms after %lu ms",
+                next, before, id, queued ? "queued" : "not queued", nid[0] ? nid : "-", o.kicks, o.pos, GetTickCount() - t0);
+        }
+        else LOG("API next next=%s: no new item in %d ms, not queued", next, START_SWITCH_MS);
+        next_reply(r, hr, GetTickCount() - t0, queued, nid);
+        return;
+    }
+    wait_started(player, before, was_paused, &o);
+    LOG("API next: %I64u -> %I64u, %s at %I64d ms after %lu ms, %d pause and play", before, o.id,
+        !o.switched ? "no new item" : o.pos > 0 ? "started" : "still", o.pos, o.ms, o.kicks);
+}
+
 /* POST /play?song=<id>&album=<id>[&storefront=<cc>][&queue=single] or /play?album=<id>[&storefront=<cc>]
- * A song is played in its album (the album queued, starting at the song) unless queue=single. */
+ * A song is played in its album (the album queued, starting at the song) unless queue=single.
+ * &next=<song>&nextAlbum=<album>: that song is also queued as Play Next before the played one goes on,
+ * so the agent's decision about a crossfade at its end has it: the agent decides when it starts an
+ * item, and an item queued later only counts after a Pause and a Play. The played song is paused as
+ * soon as it is the current item, the next one queued, then it is paused and played (about the
+ * enqueue's time later; it may have played a moment). */
 static void api_play(struct sreq *r)
 {
-    char song[32], album[32], cc[8], queue[16];
+    char song[32], album[32], cc[8], queue[16], next[32], next_album[32], nid[24] = "";
+    int queued = 0;
     struct play_request req; struct play_result res;
+    struct started o = { 0 };
+    void *player = get_player(); UINT64 before; int with_next;
 
     srv_param(r, "song", song, sizeof(song)); srv_param(r, "album", album, sizeof(album));
-    srv_param(r, "storefront", cc, sizeof(cc)); srv_param(r, "queue", queue, sizeof(queue));
-    if (!cc[0] && !GetEnvironmentVariableA("AM_STOREFRONT", cc, sizeof(cc))) strcpy(cc, "us");
-    if (!all_lower(cc)) strcpy(cc, "us");
+    srv_param(r, "queue", queue, sizeof(queue)); storefront_param(r, cc);
     if (!album[0] || !all_digits(album) || !all_digits(song) || !g_main_vm)
     { reply(r, 400, "{\"ok\":false,\"error\":\"need album=<id> (and song=<id> for a single song), numeric\"}"); return; }
+    with_next = next_params(r, next, next_album);
+    if (with_next < 0 || (with_next && !song[0]))
+    { reply(r, 400, "{\"ok\":false,\"error\":\"next=<id> needs nextAlbum=<id> and a song, numeric\"}"); return; }
 
+    before = current_item(NULL);
     req.cc = cc; req.album = album; req.song = song; req.single = !strcmp(queue, "single");
     play_catalog(&req, &res);
+    if (with_next && res.found && SUCCEEDED(res.hr))
+    {
+        DWORD t0 = GetTickCount();
+        if (wait_new_item(before, t0))
+        {
+            player_cmd(player, 13);                                     /* Pause */
+            queued = queue_next_and_start(player, cc, next, next_album, nid, &o);
+            LOG("API play next=%s: %s, queue item %s, %d pause and play, started at %I64d ms after %lu ms",
+                next, queued ? "queued" : "not queued", nid[0] ? nid : "-", o.kicks, o.pos, GetTickCount() - t0);
+        }
+        else LOG("API play next=%s: the played item did not show up in %d ms, not queued", next, START_SWITCH_MS);
+    }
     if (!res.found && SUCCEEDED(res.hr))
     {
         r->status = 404;
@@ -118,6 +279,7 @@ static void api_play(struct sreq *r)
                  res.page_error ? "true" : "false", res.ms);
         return;
     }
+    if (with_next) { next_reply(r, res.hr, res.ms, queued, nid); return; }
     r->status = SUCCEEDED(res.hr) ? 200 : 500;
     snprintf(r->body, sizeof(r->body), "{\"ok\":%s,\"hresult\":\"%08lx\",\"loadMs\":%lu}", SUCCEEDED(res.hr) ? "true" : "false", res.hr, res.ms);
 }
@@ -221,9 +383,9 @@ static void api_dequeue(struct sreq *r)
     snprintf(r->body, sizeof(r->body), "{\"ok\":%s,\"hresult\":\"%08lx\",\"removed\":%d}", SUCCEEDED(hr) ? "true" : "false", hr, n);
 }
 
-/* POST /pause /resume /stop /next /previous: IPlayer methods without arguments */
+/* POST /pause /resume /stop /previous: IPlayer methods without arguments (/next: api_next()) */
 static const struct { const char *path; int slot; } simple_cmds[] = {
-    { "/resume", 12 }, { "/pause", 13 }, { "/stop", 14 }, { "/previous", 16 }, { "/next", 17 },
+    { "/resume", 12 }, { "/pause", 13 }, { "/stop", 14 }, { "/previous", 16 },
 };
 
 /* Answer a player command once AMP.Services has run it (a few ms, on its own threads; 0.5 s at most):
@@ -254,7 +416,8 @@ void api_handle(struct sreq *r)
             api_command(r, hr, act);
             return;
         }
-    if (!strcmp(r->path, "/play")) api_play(r);
+    if (!strcmp(r->path, "/next")) api_next(r, player);
+    else if (!strcmp(r->path, "/play")) api_play(r);
     else if (!strcmp(r->path, "/quality")) api_quality(r);
     else if (!strcmp(r->path, "/crossfade")) api_crossfade(r);
     else if (!strcmp(r->path, "/autoplay")) api_autoplay(r);
