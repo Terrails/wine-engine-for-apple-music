@@ -232,7 +232,7 @@ splits it. Quality: `IPlaybackSettings` 21/22 `LosslessAudio`, 23/24
 `StreamingAudioQuality` (1 AAC 256, 2 lossless up to 48 kHz, 3 hi-res lossless up to
 192 kHz). Crossfade: 11/12 `CrossfadeSongs`, 13/14 `CrossfadeValue` in seconds (the agent keeps
 them as `crossfadeEnabled`/`crossfadeSeconds` in its preferences); the engine crossfades
-only in its AAC player ([KNOWN_ISSUES.md](../KNOWN_ISSUES.md)).
+only in its AAC player ([api.md](api.md), "Queue and seamless playback").
 
 ## Sign-in and AuthKit
 

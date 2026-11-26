@@ -40,7 +40,7 @@ Working:
 - Cloud Music Library: enrolment and sync of the account's library in the engine.
 - Catalogue playback through the app's own engine, with its software DRM path: **AAC 256 kbps**
   and **lossless (ALAC)**. The quality setting (`aac`, `lossless`, `hires`) is kept by the engine
-  across restarts. Hi-Res Lossless is selectable but has not been verified.
+  across restarts. Hi-Res Lossless plays as well (seen in Sidra; not measured above 48 kHz).
 - Playing a song in its album (next/previous follow the album), playing a whole album, pause,
   resume, stop, next, previous, seek, volume.
 - Gapless transitions inside the engine's queue: the next item starts when the current one
@@ -57,8 +57,10 @@ Working:
   whether pushes are delivered has not been verified).
 - Repeated fast track switching without crashes or leaked audio streams.
 
-Not working or not there yet: video, crossfade with lossless (AAC only, and only
-for items queued early), push events in the API, reordering the queue, shuffle/repeat, lyrics and library
+Crossfade works with AAC for items queued before the current one started; the app's engine
+does not crossfade lossless or hi-res ([docs/api.md](docs/api.md)).
+
+Not working or not there yet: video, push events in the API, reordering the queue, shuffle/repeat, lyrics and library
 browsing through the API, playing a song inside a playlist's or search result's context. See
 [KNOWN_ISSUES.md](KNOWN_ISSUES.md).
 

@@ -41,28 +41,6 @@ can show the stale value.
 **Workaround:** trust the reported volume only while a track is playing; set it explicitly before
 playing if it matters.
 
-### Crossfade only with AAC, and only when the next item was queued early
-
-The `/crossfade` setting is always stored and kept, but the engine acts on it only when:
-
-- the quality is `aac`. The agent plays lossless items with its CoreMedia player, where no
-  crossfade happened (8 s set, next items queued early, two transitions); its code never reads the
-  setting there. By its code, spatial and HLS items take the same player.
-- the next item was queued before the current one started. The agent decides how a track ends
-  when it prepares and starts it; a Play Next item added later does not change the decision
-  (a `/pause` and `/resume` after it does, at the cost of a short silence: 0.2 s in the one case
-  measured). `/play` with `next=` does this at the start of the played song (`docs/api.md`).
-- the next item is a catalogue item, not an autoplay (station) item (measured), and, by the agent's
-  code (not measured), not the next track of the same album.
-
-With all of this the next track started early (6 s with 8 s set, 8 s with 12 s; one transition
-each), the level faded without a silence and there was one audio stream. That the two tracks are really mixed
-follows from this and was not checked by ear. No failure in Wine was found; real Windows was not
-compared.
-
-**Workaround:** with `aac`, stay two items ahead with `/enqueue?...&at=end` (Add to Queue, behind the earlier
-items). Two items queued so switched early (about 6.9 s and 5.6 s with 8 s set).
-
 ### Memory still grows a little with every album page (`/play`, `/enqueue`)
 
 The main cause is fixed: the app's `JavaScriptCoreV8.dll` queues released values and deletes one chunk
@@ -73,21 +51,6 @@ from about the 98th). The rest is not traced. One contributor is Wine's heap: a 
 blocks that was full is reused only once all 31 are free.
 
 **Workaround:** restart the service after very long sessions.
-
-### Short silence between tracks of different formats
-
-Tracks that follow each other in the engine's queue start without a new `/play`. With lossless
-and hi-res, two tracks share an audio stream (no gap, also across albums) only when their audio formats are the
-same: CoreMedia refuses a gapless transition otherwise. Seen with a different sample rate and with 24-bit
-into 16-bit ALAC at 44.1 kHz; by its code any difference in the format description counts (codec, channels). The engine then replaces its
-audio stream: measured 0.16-0.9 s of digital silence, which includes what the songs themselves
-have. The four AAC pairs tried (different albums) played from one stream. Making CoreMedia accept
-different formats was tried and broke the next track. A UI that starts every track with its own `/play`
-instead has a gap of 1-3 s (the album page loads first; about one switch in a dozen needs a
-second navigation, 3.5 s or more).
-
-**Workaround:** use `/enqueue` for the next track instead of `/play` (see
-[docs/api.md](docs/api.md), "Queue and seamless playback").
 
 ### "Play Next" and "Add to Queue" go through the song's context menu
 
@@ -123,12 +86,13 @@ audio buffer size, see [docs/architecture.md](docs/architecture.md), "Design not
 dropouts with the track position ([docs/troubleshooting.md](docs/troubleshooting.md)); please
 report them.
 
-### Hi-Res Lossless is not verified
+### The status reports no format for the first seconds of a track
 
-`quality hires` is accepted and kept, but playback above 48 kHz has not been verified.
-AAC 256 kbps and lossless (ALAC 16-bit/44.1 kHz) are verified. During the first 1-4 s of every
-track the status reports `format` `other` and `sampleRate` `0` (the AAC variant), then the stream
-switches; `bitDepth` is often empty for 16-bit and 24/48 lossless.
+During the first 1-4 s of every track the status reports `format` `other` and `sampleRate` `0`
+(the AAC variant), then the stream switches; `bitDepth` is often empty for 16-bit and 24/48
+lossless. Playback is not affected.
+
+**Workaround:** read the format a few seconds into the track.
 
 ## Engine
 

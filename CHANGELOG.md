@@ -31,7 +31,7 @@ First public release. Supports Apple Music for Windows 1.1792.39942.0 (x64).
   `autoplay` and `nowPlaying.queueItemId` in the status. Album tracks in the same format play
   gapless; tracks of different formats follow with under a second of silence.
 - `POST /crossfade` and `crossfade` in the status: the app's crossfade setting (seconds). The
-  engine acts on it only with AAC and a next item queued early (KNOWN_ISSUES.md).
+  engine acts on it only with AAC and a next item queued early (docs/api.md).
 - `/enqueue` with `at=end`: Add to Queue instead of Play Next (behind the songs already queued).
 - `bin/amctl enqueue`, `dequeue`, `crossfade`, `autoplay`.
 - `GET /status` is answered while an `/enqueue` runs; connections are accepted concurrently (at

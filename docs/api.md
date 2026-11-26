@@ -297,7 +297,7 @@ current one plays and then follows `nowPlaying` instead of sending `/play`.
   transition each, by the last reported position); one added while the current track played switched
   about 1 s before the end. With `lossless`
   (measured) and `hires` (same player) the engine does not crossfade
-  ([KNOWN_ISSUES.md](../KNOWN_ISSUES.md)).
+  (its CoreMedia player never reads the setting).
 
 ## Concurrency
 
