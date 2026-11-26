@@ -273,6 +273,14 @@ server; nothing in this project touches the decoded audio.
   lock), or leaves Wine's own name when it is empty. Some mixers hide media names they consider
   generic (KDE Plasma hides names matching `playback|audio|stream|alsa|pulse|pipewire`), so an
   occasional title shows as the client name only. `AM_AUDIO_TRACK_NAME=0` turns the preload off.
+- **Mute across tracks.** The agent opens a new stream for each track whose format differs, and
+  winepulse connects it with `PA_STREAM_START_UNMUTED`, so the server (WirePlumber's stream
+  restore) skipped the mute it keeps for "Apple Music": a stream muted in a mixer or a taskbar
+  was unmuted on the next track. `libampulse.so` drops that flag in `pa_stream_connect_playback`.
+  It is part of the same preload, so `AM_AUDIO_TRACK_NAME=0` turns it off too.
+- **Taskbar.** Sidra starts `bin/amd` with `PULSE_PROP_OVERRIDE_application.process.id` set to
+  its own PID, so taskbars that match streams to windows by PID (Plasma) put the mute and volume
+  controls on Sidra's entry.
 - **Buffering.** `bin/amd` sets `PULSE_LATENCY_MSEC=100` unless you set it (see "Design
   notes").
 - **One stream.** The agent's silent start-up stream is answered by ampkg without a real stream,

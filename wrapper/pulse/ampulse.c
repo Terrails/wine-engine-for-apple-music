@@ -12,7 +12,9 @@
  *     at most every 250 ms while streams exist and renames them with pa_stream_set_name.
  * winepulse holds its lock around pa_stream_new and while its mainloop thread runs (its poll
  * function drops it only around poll()), so all libpulse calls here are made under that lock.
- * Without AM_MEDIA_NAME_FILE everything is passed through untouched. */
+ * Without AM_MEDIA_NAME_FILE the names are passed through untouched.
+ * pa_stream_connect_playback drops winepulse's PA_STREAM_START_UNMUTED, so a muted stream stays
+ * muted on the next track (see the function). */
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <fcntl.h>
@@ -126,6 +128,19 @@ EXPORT void pa_mainloop_set_poll_func(pa_mainloop *m, pa_poll_func fn, void *ud)
     if (!name_file() || !(w = malloc(sizeof(*w)))) { orig(m, fn, ud); return; }
     w->fn = fn; w->ud = ud;                           /* kept for the mainloop's lifetime */
     orig(m, poll_wrapper, w);
+}
+
+/* The agent opens a new stream for each track (or format), and winepulse asks for
+ * PA_STREAM_START_UNMUTED. That flag makes the server skip the mute it saved for "Apple Music"
+ * (WirePlumber's stream restore), so a stream muted in a mixer or a taskbar came back unmuted on
+ * the next track. Without it the new stream starts muted when the last one was. */
+EXPORT int pa_stream_connect_playback(pa_stream *s, const char *dev, const pa_buffer_attr *attr,
+                                      pa_stream_flags_t flags, const pa_cvolume *volume, pa_stream *sync)
+{
+    static int (*orig)(pa_stream *, const char *, const pa_buffer_attr *, pa_stream_flags_t,
+                       const pa_cvolume *, pa_stream *);
+    if (!orig && !(orig = real("pa_stream_connect_playback"))) abort();
+    return orig(s, dev, attr, flags & ~PA_STREAM_START_UNMUTED, volume, sync);
 }
 
 EXPORT pa_stream *pa_stream_new(pa_context *c, const char *name, const pa_sample_spec *ss, const pa_channel_map *map)
