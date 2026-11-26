@@ -13,7 +13,7 @@
 
 #define KEEP_CHUNKS  64        /* about 4 album pages */
 #define MAX_CHUNKS   100000    /* more than this is not a chunk count */
-#define COUNT_OFFSET 0x78      /* context group: number of queued chunks (app version 1.1792.39941.0) */
+#define COUNT_OFFSET 0x78      /* context group: number of queued chunks (app version 1.1792.39942.0) */
 
 typedef void (*gc_callback)(void *isolate, int type, int flags, void *group);
 static const char add_callback_name[] =

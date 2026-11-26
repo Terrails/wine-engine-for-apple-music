@@ -8,7 +8,7 @@
 #   winui/Microsoft.UI.winmd, winui/Microsoft.Foundation.winmd
 #                     Microsoft.WindowsAppSDK.InteractiveExperiences 2.1.9 (metadata/10.0.18362.0)
 # The two WinAppSDK packages are the ones Microsoft.WindowsAppSDK 2.5.1 references; their .winmd
-# files are byte-identical to the copies inside the app's MSIX (1.1792.39941.0). Only the few
+# files are byte-identical to the copies inside the app's MSIX (1.1792.39942.0). Only the few
 # WinUI classes AMP.Services touches are shimmed, so only these three files are extracted.
 #
 # License: these Microsoft packages require license acceptance (requireLicenseAcceptance in their

@@ -200,7 +200,7 @@ its cloud library when it starts.
 
 ### Only one app version is supported
 
-The wrapper and `ampkg.dll` are written against Apple Music for Windows 1.1792.39941.0: the
+The wrapper and `ampkg.dll` are written against Apple Music for Windows 1.1792.39942.0: the
 package identity `ampkg.dll` reports is fixed to that version, and the wrapper calls the app's
 interfaces by vtable slot and interface ID taken from it. `setup-prefix.sh` therefore accepts only
 that package (checksum checked). Reading the identity from the package's `AppxManifest.xml` at run

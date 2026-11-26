@@ -40,7 +40,7 @@ hot-patches the implementations in kernelbase so direct callers see the same, an
   (`GetCurrentPackageFullName`, `GetCurrentPackageId`, `GetCurrentPackageInfo`,
   `GetCurrentApplicationUserModelId`, 29 functions in all). Under Wine nothing is installed as a
   package, so these fail with `APPMODEL_ERROR_NO_PACKAGE` and the app stops. ampkg answers them
-  with the identity of the tested package (`AppleInc.AppleMusicWin_1.1792.39941.0_x64__nzyj5cx40ttqa`,
+  with the identity of the tested package (`AppleInc.AppleMusicWin_1.1792.39942.0_x64__nzyj5cx40ttqa`,
   application ID `App`); the package path is the executable's directory. *App-specific: the
   general fix would be MSIX deployment in Wine.*
 - **`compat.c`: functions Wine lacks or gets wrong here.**

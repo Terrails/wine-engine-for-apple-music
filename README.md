@@ -31,7 +31,7 @@ control playback.
 
 ## Status
 
-Version 0.1.0 (unreleased). Works with Apple Music for Windows **1.1792.39941.0** (x64).
+Version 0.1.0 (unreleased). Works with Apple Music for Windows **1.1792.39942.0** (x64).
 
 Working:
 

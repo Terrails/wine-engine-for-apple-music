@@ -129,18 +129,18 @@ app. This project does not provide it and does not describe how to get it.
 
 ### Expected version and checksums
 
-This release is built against **Apple Music for Windows 1.1792.39941.0**:
+This release is built against **Apple Music for Windows 1.1792.39942.0**:
 
 | File | SHA-256 |
 |---|---|
-| `MusicPackage_1.1792.39941.0_x64.msix` (x64 package) | `84499bf9b4d3548fb77607dff5eece6f8b8d1a40b62eda78fc0bfc4f03aa3be7` |
-| the `.Msixbundle` of the same version | `8d6c4069666d446046cda42d32b1765cb08d96716e446080a7c5894a819b0477` |
+| `MusicPackage_1.1792.39942.0_x64.msix` (x64 package) | `f7638e28863fbd21c5c07eb4413f797762fd6f6fdaa0f17cc23a87fb46e7efb7` |
 
 ```sh
-sha256sum /path/to/MusicPackage_1.1792.39941.0_x64.msix     # or the path of your .Msixbundle
+sha256sum /path/to/MusicPackage_1.1792.39942.0_x64.msix
 ```
 
-`setup-prefix.sh` checks this itself and refuses any other file. The reason: the wrapper calls
+A `.Msixbundle` of the same version works too: `setup-prefix.sh` extracts the x64 `.msix` from
+it and checks that. The script checks the package itself and refuses any other file. The reason: the wrapper calls
 into the app's interfaces by vtable slot and interface ID, typed in from this exact version; a
 different build can move them and fail in ways that look like random crashes.
 
@@ -206,7 +206,7 @@ Nothing from the packages is part of this repository; the metadata stays in your
 ## Set up the prefix
 
 ```sh
-./setup-prefix.sh /path/to/MusicPackage_1.1792.39941.0_x64.msix    # or your .Msixbundle
+./setup-prefix.sh /path/to/MusicPackage_1.1792.39942.0_x64.msix    # or your .Msixbundle
 ```
 
 The prefix is created at `~/.local/share/wine-engine-for-apple-music/prefix` (change it with

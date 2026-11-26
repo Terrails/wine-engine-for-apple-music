@@ -5,7 +5,7 @@ All notable changes to this project are listed here. Versions follow
 
 ## 0.1.0 (unreleased)
 
-First public release. Supports Apple Music for Windows 1.1792.39941.0 (x64).
+First public release. Supports Apple Music for Windows 1.1792.39942.0 (x64).
 
 ### Engine and service
 

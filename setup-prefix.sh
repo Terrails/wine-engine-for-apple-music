@@ -34,10 +34,9 @@ ROOT="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 . "$ROOT/bin/amd-env.sh"
 export AM_PREFIX
 
-# the tested package
-MSIX_VERSION=1.1792.39941.0
-MSIX_SHA256=84499bf9b4d3548fb77607dff5eece6f8b8d1a40b62eda78fc0bfc4f03aa3be7     # MusicPackage_1.1792.39941.0_x64.msix
-BUNDLE_SHA256=8d6c4069666d446046cda42d32b1765cb08d96716e446080a7c5894a819b0477   # the .Msixbundle that holds it
+# the tested package: its x64 .msix (a .Msixbundle is checked by the x64 .msix inside it)
+MSIX_VERSION=1.1792.39942.0
+MSIX_SHA256=f7638e28863fbd21c5c07eb4413f797762fd6f6fdaa0f17cc23a87fb46e7efb7     # MusicPackage_1.1792.39942.0_x64.msix
 # Apple Root CA, https://www.apple.com/appleca/AppleIncRootCertificate.cer
 CA_URL=https://www.apple.com/appleca/AppleIncRootCertificate.cer
 CA_SHA256=b0b1730ecbc7ff4505142c49f1295e6eda6bcaed7e2c68c5be91b5a11001f024
@@ -104,7 +103,7 @@ manifest_field() {   # <AppxManifest.xml text on stdin> <attribute>: from the <I
     tr '\r\n\t' '   ' | grep -o '<Identity [^>]*>' | head -1 | sed -n "s/.* $1=\"\([^\"]*\)\".*/\1/p"
 }
 say "checking $IN"
-IN_SUM="$(sha256 "$IN")"
+MSIX="$IN"
 if unzip -l "$IN" AppxMetadata/AppxBundleManifest.xml >/dev/null 2>&1; then
     KIND=bundle
     # the bundle's x64 application package: its file name and version
@@ -113,44 +112,35 @@ if unzip -l "$IN" AppxMetadata/AppxBundleManifest.xml >/dev/null 2>&1; then
     INNER="$(printf '%s\n' "$PKG" | sed -n 's/.* FileName="\([^"]*\)".*/\1/p')"
     VERSION="$(printf '%s\n' "$PKG" | sed -n 's/.* Version="\([^"]*\)".*/\1/p')"
     [ -n "$INNER" ] || die "$IN: bundle without an x64 application package"
-    TESTED="$BUNDLE_SHA256"
+    # the x64 .msix is what gets checked and unpacked; the temporary copy is removed on exit
+    mkdir -p "$AM_CACHE_DIR/msix"
+    TMPD="$(mktemp -d "$AM_CACHE_DIR/msix/.bundle.XXXXXX")"
+    MSIX="$TMPD/package.msix"
+    unzip -p "$IN" "$INNER" > "$MSIX" || die "$IN: cannot extract $INNER"
 else
     KIND=msix
     unzip -l "$IN" AppxManifest.xml >/dev/null 2>&1 || die "$IN: not an .msix or .Msixbundle"
     VERSION="$(unzip -p "$IN" AppxManifest.xml | manifest_field Version)"
-    TESTED="$MSIX_SHA256"
 fi
-if [ "$IN_SUM" != "$TESTED" ] || [ "$VERSION" != "$MSIX_VERSION" ]; then
-    echo "package: $KIND, version $VERSION, SHA-256 $IN_SUM" >&2
-    echo "tested:  version $MSIX_VERSION, SHA-256 $TESTED" >&2
+PKG_SUM="$(sha256 "$MSIX")"
+[ "$KIND" = msix ] || echo "$INNER inside the bundle: SHA-256 $PKG_SUM" >&2
+if [ "$PKG_SUM" != "$MSIX_SHA256" ] || [ "$VERSION" != "$MSIX_VERSION" ]; then
+    echo "package: version $VERSION, x64 .msix SHA-256 $PKG_SUM" >&2
+    echo "tested:  version $MSIX_VERSION, x64 .msix SHA-256 $MSIX_SHA256" >&2
     [ "$AM_ALLOW_UNTESTED_MSIX" = 1 ] ||
         die "untested package; set AM_ALLOW_UNTESTED_MSIX=1 to try it anyway (the shims and hard-coded interface IDs may not match)"
     echo "warning: AM_ALLOW_UNTESTED_MSIX=1: continuing with an untested package" >&2
 fi
 case "$VERSION" in ''|*/*|*..*) die "$IN: no usable version in the manifest" ;; esac
 
-# what the unpacked copy is recorded as: the .msix hash (known for the tested bundle)
-PKG_SUM="$IN_SUM"
-[ "$IN_SUM" = "$BUNDLE_SHA256" ] && PKG_SUM="$MSIX_SHA256"
+# the unpacked copy is recorded with the .msix hash
 STAGE="$AM_CACHE_DIR/msix/$VERSION"
 if [ "$(cat "$STAGE.complete" 2>/dev/null)" != "$PKG_SUM" ] || [ ! -f "$STAGE/AppxManifest.xml" ]; then
     say "unpacking into $STAGE"
     mkdir -p "$AM_CACHE_DIR/msix"
     rm -rf "$STAGE.tmp" "$STAGE.tmp.msix" "$STAGE.complete"
     mkdir -p "$STAGE.tmp"
-    MSIX="$IN"
-    if [ "$KIND" = bundle ]; then
-        MSIX="$STAGE.tmp.msix"
-        PARTIAL="$MSIX"     # removed on exit if anything below fails
-        unzip -p "$IN" "$INNER" > "$MSIX"
-        INNER_SUM="$(sha256 "$MSIX")"
-        if [ "$IN_SUM" = "$BUNDLE_SHA256" ] && [ "$INNER_SUM" != "$MSIX_SHA256" ]; then
-            die "$INNER inside the bundle: SHA-256 $INNER_SUM, expected $MSIX_SHA256"
-        fi
-        echo "$INNER: SHA-256 $INNER_SUM" >&2
-    fi
     unzip -q -o "$MSIX" -d "$STAGE.tmp"
-    if [ "$KIND" = bundle ]; then rm -f "$MSIX"; PARTIAL=; fi
     [ "$(manifest_field ProcessorArchitecture < "$STAGE.tmp/AppxManifest.xml")" = x64 ] || die "not an x64 package"
     [ "$(manifest_field Version < "$STAGE.tmp/AppxManifest.xml")" = "$VERSION" ] || die "package version mismatch"
     [ -f "$STAGE.tmp/AMPLibraryAgent.exe" ] || die "no AMPLibraryAgent.exe in the package"
@@ -158,6 +148,7 @@ if [ "$(cat "$STAGE.complete" 2>/dev/null)" != "$PKG_SUM" ] || [ ! -f "$STAGE/Ap
     mv "$STAGE.tmp" "$STAGE"
     printf '%s\n' "$PKG_SUM" > "$STAGE.complete"
 fi
+[ "$KIND" = msix ] || { rm -rf "$TMPD"; TMPD=; }
 
 # ---- Apple Root CA ----
 # Apple's sign-in server (gsa.apple.com) uses a certificate from Apple's own authority, which the
