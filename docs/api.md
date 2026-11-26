@@ -137,7 +137,9 @@ Details:
   next just after a track change.
 - **`/autoplay`**: the engine's autoplay (similar songs after the end of the queue). Off: the
   `autoplay` section empties and playback stops after the last queued item. Kept across
-  restarts. `autoplay` in the response is read back.
+  restarts. `autoplay` in the response is read back. A service that has played nothing yet keeps the setting
+  as it was: the answer is then 202 with `"pending":true` (and the old `autoplay`), and the setting
+  takes effect once something plays.
 - **`/quit`**: answers first, then stops playback (about 1.5 s) and ends the service. During an
   `/enqueue` it is answered at once; the `/enqueue` then stops waiting (up to 5 s for a context menu
   it has asked for), answers 503 `the service is quitting`, and playback stops after it.

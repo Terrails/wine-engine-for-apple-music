@@ -35,7 +35,7 @@ static int serve(int port)
     }
     media_name_init();
     LOG("SERVE ready on http://127.0.0.1:%d (token in %ls)", port, token_path);
-    while (!api_quit_requested && !oslog_agent_lost) pump(250);
+    while (!api_quit_requested && !oslog_agent_lost) { pump(250); api_idle(); }
     if (oslog_agent_lost) exit_agent_lost("the agent is gone");
     if (get_player()) { CALL1(get_player(), 14, &stop); pump(1500); }   /* Stop */
     LOG("SERVE quitting");

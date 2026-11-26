@@ -304,18 +304,43 @@ static void api_crossfade(struct sreq *r)
              SUCCEEDED(hr) ? "true" : "false", hr, now_on ? "true" : "false", now_s);
 }
 
+/* Autoplay asked for while the service had played nothing yet: the app takes the call but keeps
+ * the setting as it was, so it is set again once something plays (api_idle). -1: nothing pending. */
+static int autoplay_wanted = -1;
+
 /* POST /autoplay?on=0|1 */
 static void api_autoplay(struct sreq *r)
 {
-    char on[8]; HRESULT hr;
+    char on[8]; HRESULT hr; int want, now;
     srv_param(r, "on", on, sizeof(on));
     if (strcmp(on, "0") && strcmp(on, "1")) { reply(r, 400, "{\"ok\":false,\"error\":\"need on=0|1\"}"); return; }
-    hr = queue_set_autoplay(on[0] == '1');
-    for (int i = 0; i < 20 && SUCCEEDED(hr) && queue_autoplay() != (on[0] == '1'); i++) pump(50);
-    LOG("API autoplay %s -> %08lx, now %d", on, hr, queue_autoplay());
-    r->status = SUCCEEDED(hr) ? 200 : 500;
-    snprintf(r->body, sizeof(r->body), "{\"ok\":%s,\"hresult\":\"%08lx\",\"autoplay\":%s}",
-             SUCCEEDED(hr) ? "true" : "false", hr, queue_autoplay() ? "true" : "false");
+    want = on[0] == '1';
+    hr = queue_set_autoplay(want);
+    for (int i = 0; i < 20 && SUCCEEDED(hr) && queue_autoplay() != want; i++) pump(50);
+    now = queue_autoplay();
+    autoplay_wanted = SUCCEEDED(hr) && now != want ? want : -1;
+    LOG("API autoplay %s -> %08lx, now %d%s", on, hr, now, autoplay_wanted >= 0 ? " (set again once something plays)" : "");
+    r->status = FAILED(hr) ? 500 : autoplay_wanted >= 0 ? 202 : 200;
+    snprintf(r->body, sizeof(r->body), "{\"ok\":%s,\"hresult\":\"%08lx\",\"autoplay\":%s%s}",
+             SUCCEEDED(hr) ? "true" : "false", hr, now ? "true" : "false",
+             autoplay_wanted >= 0 ? ",\"pending\":true" : "");
+}
+
+/* Between requests: apply a pending /autoplay once something plays (at most every 2 s). */
+void api_idle(void)
+{
+    static DWORD last; struct player_status st; HRESULT hr;
+    if (autoplay_wanted < 0) return;
+    if (queue_autoplay() == autoplay_wanted) { autoplay_wanted = -1; return; }
+    if (GetTickCount() - last < 2000) return;
+    player_status(&st);
+    if (st.playing)
+    {
+        last = GetTickCount();
+        hr = queue_set_autoplay(autoplay_wanted);
+        LOG("autoplay %d set again after playback started -> %08lx, now %d", autoplay_wanted, hr, queue_autoplay());
+    }
+    player_status_free(&st);
 }
 
 /* POST /enqueue?song=<id>&album=<id>[&storefront=<cc>][&at=next|end]: Play Next (default) or Add to Queue */

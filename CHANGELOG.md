@@ -41,6 +41,8 @@ First public release. Supports Apple Music for Windows 1.1792.39942.0 (x64).
 - Player commands (`/pause`, `/seek`, `/volume`, ...) answer once the app has run them, so that commands
   sent close together keep their order.
 - `/next` waits until the next item plays, and pauses and plays it when the agent leaves it at 0 ms.
+- `/autoplay` on a service that has played nothing yet answers 202 `"pending":true`: the app keeps
+  the old setting until something plays, then takes the new one (the service sets it again if not).
 - `/play` and `/next` take `next=<id>&nextAlbum=<id>`: that song is queued behind the new item, so the
   change into it can be crossfaded (`nextQueueItemId` or `"nextQueued":false` in the answer).
 - `/dequeue` checks the current item again right before deleting.

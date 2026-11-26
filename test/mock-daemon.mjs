@@ -18,7 +18,7 @@ let hung = null;   // POST /mock/hang?call=<phase> (empty: recovered): the agent
 let quality = 'lossless', vol = 0.05, cur = null, playing = false, paused = false, pos = 0, at = 0;
 let seamless = !process.env.MOCK_NO_SEAMLESS;
 let autoplay = !!process.env.MOCK_AUTOPLAY, crossfade = { on: false, seconds: 6 };
-let upNext = [], auto = null, qid = 1000, quits = 0;   // next-added items, the autoplay item; qid: the last queue item ID; quits: /quit count (an /enqueue that a /quit overtook answers 503)
+let upNext = [], auto = null, qid = 1000, quits = 0, played = false, autoplayWanted = null;   // next-added items, the autoplay item; qid: the last queue item ID; quits: /quit count (an /enqueue that a /quit overtook answers 503)
 const now = () => Date.now();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const elapsed = () => (now() - at) * SPEED;
@@ -26,7 +26,7 @@ const position = () => (cur && playing ? Math.min(cur.dur, pos + elapsed()) : po
 // what /status shows: the engine updates the position about once a second after a play, seek or resume
 const shown = () => (cur && playing ? Math.min(cur.dur, pos + Math.floor(elapsed() / 1000) * 1000) : pos);
 const log = (...a) => console.log(new Date().toISOString().slice(11, 23), ...a);
-const start = (t) => { cur = t; pos = 0; at = now(); playing = true; paused = false; auto = null; };
+const start = (t) => { played = true; if (autoplayWanted !== null) { autoplay = autoplayWanted; autoplayWanted = null; } cur = t; pos = 0; at = now(); playing = true; paused = false; auto = null; };
 const autoItem = () => (auto ??= { title: 'Unrelated Autoplay Track', dur: 180000, id: '1', artist: 'Someone', album: 'Something', qid: String(++qid) });
 function advance(why) {
   if (seamless && upNext.length) { const n = upNext.shift(); log(why, 'into', n.title); start(n); }
@@ -114,8 +114,10 @@ async function handle(req, res) {
     }
     case '/autoplay':
       if (q.on !== '0' && q.on !== '1') return send(400, { ok: false, error: 'need on=0|1' });
-      autoplay = q.on === '1';
-      return send(200, { ok: true, hresult: '00000000', autoplay });
+      // as the engine: before anything played the setting stays, and takes effect when something plays
+      if (played || autoplay === (q.on === '1')) { autoplay = q.on === '1'; autoplayWanted = null; return send(200, { ok: true, hresult: '00000000', autoplay }); }
+      autoplayWanted = q.on === '1';
+      return send(202, { ok: true, hresult: '00000000', autoplay, pending: true });
     case '/pause': if (playing) { pos = position(); playing = false; paused = true; } break;
     case '/resume': if (cur && !playing) { at = now(); playing = true; paused = false; } break;
     case '/stop': cur = null; playing = paused = false; pos = 0; break;
